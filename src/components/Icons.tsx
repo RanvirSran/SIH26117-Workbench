@@ -1,0 +1,66 @@
+// Small inline SVG icon set — no icon library dependency.
+
+export function IconSearch() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+export function IconFile() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24">
+      <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+      <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
+    </svg>
+  );
+}
+
+export function IconCalculator() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24">
+      <rect x="4" y="4" width="16" height="16" rx="1" />
+      <line x1="8" y1="9" x2="16" y2="9" />
+      <line x1="8" y1="13" x2="13" y2="13" />
+    </svg>
+  );
+}
+
+export function IconCode() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24">
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </svg>
+  );
+}
+
+export function IconArtifact() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="7" height="7" />
+      <rect x="14" y="3" width="7" height="7" />
+      <rect x="14" y="14" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" />
+    </svg>
+  );
+}
+
+export function IconSend() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24" style={{ width: 16, height: 16 }}>
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </svg>
+  );
+}
+
+export const toolIconMap = {
+  search: IconSearch,
+  file: IconFile,
+  calc: IconCalculator,
+  code: IconCode,
+  artifact: IconArtifact,
+};
