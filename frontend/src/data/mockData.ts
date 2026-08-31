@@ -1,10 +1,10 @@
 import type { ChatMessage, ChatResponse, Conversation, KnowledgeBaseStatus } from '../types';
 
 export const mockConversations: Conversation[] = [
-  { id: 'c1', title: 'P-102 shutdown SOP', active: true },
-  { id: 'c2', title: 'LOTO isolation query' },
-  { id: 'c3', title: 'Vessel inspection rules' },
-  { id: 'c4', title: 'Fire safety drawing review' },
+  { id: 'c1', title: 'P-102 shutdown SOP', timestamp: '4 min ago', active: true },
+  { id: 'c2', title: 'LOTO isolation query', timestamp: 'Yesterday' },
+  { id: 'c3', title: 'Vessel inspection rules', timestamp: '2 days ago' },
+  { id: 'c4', title: 'Fire safety drawing review', timestamp: '4 days ago' },
 ];
 
 export const mockKnowledgeBaseStatus: KnowledgeBaseStatus = {

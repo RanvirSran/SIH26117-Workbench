@@ -1,5 +1,5 @@
 import type { Conversation, ToolDef } from '../types';
-import { toolIconMap } from './Icons';
+import { IconChat, toolIconMap } from './Icons';
 
 const tools: ToolDef[] = [
   { id: 't1', name: 'RAG search', status: 'ready', icon: 'search' },
@@ -40,7 +40,13 @@ export default function Sidebar({
             className={`conv-item${c.id === activeConversationId ? ' active' : ''}`}
             onClick={() => onSelectConversation(c.id)}
           >
-            {c.title}
+            <span className="conv-ic">
+              <IconChat />
+            </span>
+            <span className="conv-text">
+              <span className="conv-title">{c.title}</span>
+              <span className="conv-time">{c.timestamp}</span>
+            </span>
           </div>
         ))}
       </div>
@@ -64,10 +70,14 @@ export default function Sidebar({
           const Icon = toolIconMap[tool.icon];
           return (
             <div className="tool-row" key={tool.id}>
-              <Icon />
+              <span className="icon-chip">
+                <Icon />
+              </span>
               <span className="name">{tool.name}</span>
-              <span className="dot" />
-              <span className="state">Ready</span>
+              <span className="state-badge-mini">
+                <span className="dot" />
+                Ready
+              </span>
             </div>
           );
         })}

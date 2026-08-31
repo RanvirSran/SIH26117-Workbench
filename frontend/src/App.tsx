@@ -4,6 +4,8 @@ import Sidebar from './components/Sidebar';
 import ChatThread from './components/ChatThread';
 import Composer from './components/Composer';
 import StatusBar from './components/StatusBar';
+import AmbientBackground from './components/AmbientBackground';
+import LoginPage from './pages/LoginPage';
 import { useTheme } from './hooks/useTheme';
 import { fetchConversationHistory, fetchConversations, fetchKnowledgeBaseStatus, sendMessage } from './api/client';
 import type { ChatMessage, Conversation, KnowledgeBaseStatus } from './types';
@@ -13,6 +15,8 @@ const nextId = () => `m${++messageIdCounter}`;
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>('');
   const [kbStatus, setKbStatus] = useState<KnowledgeBaseStatus>({
@@ -22,9 +26,8 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Initial load: conversations + knowledge base status come from the
-  // backend (or mock data, depending on VITE_USE_MOCK_DATA).
   useEffect(() => {
+    if (!isAuthenticated) return;
     fetchConversations().then((convs) => {
       setConversations(convs);
       const active = convs.find((c) => c.active) ?? convs[0];
@@ -34,7 +37,7 @@ export default function App() {
       }
     });
     fetchKnowledgeBaseStatus().then(setKbStatus);
-  }, []);
+  }, [isAuthenticated]);
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId);
 
@@ -72,16 +75,28 @@ export default function App() {
   };
 
   const handleNewConversation = () => {
-    const newConv: Conversation = { id: `local-${Date.now()}`, title: 'New conversation' };
+    const newConv: Conversation = { id: `local-${Date.now()}`, title: 'New conversation', timestamp: 'Just now' };
     setConversations((prev) => [newConv, ...prev]);
     setActiveConversationId(newConv.id);
     setMessages([]);
     // Backend wiring: POST /conversations to persist the new conversation.
   };
 
+  if (!isAuthenticated) {
+    // Placeholder auth — replace with real sign-in call once the backend
+    // exposes an auth endpoint. onSignIn just flips local state for now.
+    return <LoginPage onSignIn={() => setIsAuthenticated(true)} />;
+  }
+
   return (
     <div className="app">
-      <TopBar workspace="Refinery Ops" model="Local-32B-Instruct" userInitials="RS" theme={theme} toggleTheme={toggleTheme} />
+      <TopBar
+        workspace="Refinery Ops"
+        model="Local-32B-Instruct"
+        userInitials="RS"
+        theme={theme}
+        toggleTheme={toggleTheme}
+      />
 
       <Sidebar
         conversations={conversations}
@@ -93,6 +108,7 @@ export default function App() {
       />
 
       <div className="main">
+        <AmbientBackground />
         <ChatThread
           title={activeConversation?.title ?? 'New conversation'}
           workspace="Refinery Ops"
