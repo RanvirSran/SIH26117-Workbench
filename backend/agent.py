@@ -39,18 +39,32 @@ MODEL_NAME = "llama3.2:3b"  # must match what you pulled with ollama
 @tool
 def search_knowledge_base(query: str) -> str:
     """
-    Search the local knowledge base of safety regulations and SOPs
-    (Oil Mines Regulations, Petroleum Rules, Hazardous Chemicals
-    Rules, etc.) for information relevant to the query. Use this when
-    the user asks about a specific regulation, procedure, or safety
-    requirement.
+    Search the organization's local safety regulations and SOPs.
+
+    USE THIS TOOL ONLY when the user needs information that is
+    specifically contained in the organization's regulations,
+    SOPs, rules, or safety documentation.
+
+    DO NOT use this tool for general knowledge, casual conversation,
+    programming questions, greetings, or questions that can be
+    answered without consulting the organization's documents.
+
+    Examples requiring this tool:
+    - "What is the notice of disease requirement?"
+    - "What does Oil Mines Regulations say about ventilation?"
+    - "What PPE does the SOP require?"
+
+    Examples NOT requiring this tool:
+    - "What is Python?"
+    - "What is an API?"
+    - "Hello"
     """
     # This docstring is NOT just documentation - the agent reads it to
     # decide WHEN to call this tool. Vague or missing docstrings are a
     # common reason agents fail to use a tool when they should.
     results = rag_search(query, n_results=3)
     if not results:
-        return "No relevant documents found in the knowledge base."
+        return "NO_RELEVANT_KB_RESULTS"
 
     formatted = []
     for r in results:
@@ -59,43 +73,138 @@ def search_knowledge_base(query: str) -> str:
 
 
 llm = ChatOllama(model=MODEL_NAME, temperature=0)
-agent = create_react_agent(llm, tools=[search_knowledge_base])
+SYSTEM_PROMPT = """
+You are an assistant for a safety regulations and SOP system.
+
+You have access to a knowledge-base search tool containing official
+safety regulations and SOP documents.
+
+IMPORTANT: Do NOT automatically use the knowledge-base tool for every
+question.
+
+Use the knowledge-base tool ONLY when the user's question requires
+information from the stored regulations, SOPs, rules, or other
+domain-specific documents.
+
+Examples where you SHOULD use the knowledge base:
+- "What is the notice of disease requirement?"
+- "What does the Oil Mines Regulations say about ventilation?"
+- "What PPE is required according to the SOP?"
+- "What is the procedure for reporting an accident?"
+- "What are the requirements under Petroleum Rules?"
+
+Examples where you SHOULD NOT use the knowledge base:
+- "Hello"
+- "What can you do?"
+- "What is Python?"
+- "Explain what an API is."
+- "What is 2 + 2?"
+- Casual conversation or general knowledge questions.
+
+If the question can be answered reliably without information from
+the organization's regulations or SOPs, answer it directly.
+
+When in doubt about whether the question requires the organization's
+documents, prefer answering directly rather than searching.
+
+After using the knowledge base, base your answer on the retrieved
+information. Do not invent regulatory requirements that are not
+supported by the retrieved documents.
+"""
+
+agent = create_react_agent(
+    llm,
+    tools=[search_knowledge_base],
+    prompt=SYSTEM_PROMPT
+)
 
 
 def run_agent(message: str) -> dict:
     """
-    Runs the agent on a single message and returns both the final
-    answer AND a human-readable list of reasoning steps - the second
-    part is specifically for the "reasoning trace" UI panel your
-    frontend teammates are building. Without this, the frontend would
-    only ever see the final answer with no visibility into what the
-    agent actually did to get there.
+    Runs the agent on a single message.
+
+    If RAG is used but returns no relevant information, the request
+    falls back to the general LLM instead of stopping with a
+    "no documents found" response.
     """
-    result = agent.invoke({"messages": [{"role": "user", "content": message}]})
+
+    result = agent.invoke({
+        "messages": [
+            {"role": "user", "content": message}
+        ]
+    })
+
     messages = result["messages"]
 
     steps = []
     final_reply = ""
+    rag_failed = False
 
     for msg in messages:
         msg_type = type(msg).__name__
+
         if msg_type == "AIMessage":
+
             if getattr(msg, "tool_calls", None):
                 for call in msg.tool_calls:
-                    steps.append(f"Deciding to use tool: {call['name']} "
-                                 f"(query: {call['args'].get('query', '')})")
+                    steps.append(
+                        f"Deciding to use tool: {call['name']} "
+                        f"(query: {call['args'].get('query', '')})"
+                    )
+
             if msg.content:
                 final_reply = msg.content
+
         elif msg_type == "ToolMessage":
-            preview = str(msg.content)[:150]
-            steps.append(f"Tool result: {preview}...")
 
-    return {"reply": final_reply, "steps": steps}
+            if "NO_RELEVANT_KB_RESULTS" in str(msg.content):
+                rag_failed = True
 
+                steps.append(
+                    "No relevant information found in the knowledge base."
+                )
+            else:
+                preview = str(msg.content)[:150]
+
+                steps.append(
+                    f"Tool result: {preview}..."
+                )
+
+    # ---------------------------------------------------------------
+    # FALLBACK
+    # ---------------------------------------------------------------
+
+    if rag_failed:
+
+        steps.append(
+            "Falling back to general model because the knowledge base "
+            "did not contain relevant information."
+        )
+
+        fallback_result = llm.invoke([
+            (
+                "system",
+                "Answer the user's question using your general knowledge. "
+                "Do not claim that the answer came from the local knowledge "
+                "base. If the question requires specific regulations or "
+                "SOP information that you cannot verify, make that clear."
+            ),
+            (
+                "user",
+                message
+            )
+        ])
+
+        final_reply = fallback_result.content
+
+    return {
+        "reply": final_reply,
+        "steps": steps
+    }
 
 if __name__ == "__main__":
     # Quick standalone test before wiring into FastAPI
-    test_message = "What is the notice of disease requirement?"
+    test_message = "what is prompt engineering?"
     result = run_agent(test_message)
     print("Steps:")
     for s in result["steps"]:

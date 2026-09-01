@@ -1,61 +1,170 @@
 """
-Day 2 part 2: retrieval - test that searching actually returns
-relevant chunks, standalone, before wiring this into FastAPI or the
-agent (that's Day 3). Run this AFTER ingest.py has populated Chroma.
+Day 2 part 2: retrieval.
 
-Run with: python retrieve.py "your test question here"
+Searches the local Chroma knowledge base using the same embedding model
+used during ingestion.
+
+The search applies a relevance threshold so Chroma does not blindly
+return unrelated chunks for every query.
+
+Run with:
+    python retrieve.py "your test question here"
 """
 
 import sys
+import os
+
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-import os
 
-CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+# -------------------------------------------------------------------
+# Configuration
+# -------------------------------------------------------------------
+
+CHROMA_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "chroma_db"
+)
+
 COLLECTION_NAME = "sih26117_kb"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
+# Initial threshold for cosine distance.
+#
+# Lower distance = more semantically similar.
+# This should be tuned using real queries from your knowledge base.
+MAX_DISTANCE = 0.6
 
-def search(query: str, n_results: int = 5):
+
+# -------------------------------------------------------------------
+# Load models / database once
+# -------------------------------------------------------------------
+#
+# These are intentionally loaded at module level rather than inside
+# search(). This prevents the embedding model from being loaded again
+# every time the agent performs a RAG search.
+# -------------------------------------------------------------------
+
+print("Loading embedding model...")
+model = SentenceTransformer(EMBEDDING_MODEL)
+
+client = chromadb.PersistentClient(path=CHROMA_DIR)
+collection = client.get_collection(COLLECTION_NAME)
+
+
+# -------------------------------------------------------------------
+# Search
+# -------------------------------------------------------------------
+
+def search(
+    query: str,
+    n_results: int = 5,
+    max_distance: float = MAX_DISTANCE
+) -> list:
     """
-    Embeds the query with the SAME model used during ingestion (this
-    has to match - you can't embed with one model and search with a
-    different one, the vector spaces aren't compatible), then asks
-    Chroma for the n_results closest chunks by embedding similarity.
+    Search the local knowledge base for chunks relevant to the query.
 
-    Returns a list of dicts: {"text": ..., "source": ..., "distance": ...}
-    so this can be reused both by the CLI test below AND by the
-    FastAPI /search endpoint - one function, two callers, no duplicated
-    logic to keep in sync.
+    Parameters:
+        query:
+            User's search query.
+
+        n_results:
+            Maximum number of candidate chunks to retrieve from Chroma.
+
+        max_distance:
+            Maximum allowed cosine distance.
+            Results farther away than this are considered irrelevant
+            and are discarded.
+
+    Returns:
+        A list of dictionaries:
+
+        [
+            {
+                "text": "...",
+                "source": "...",
+                "distance": 0.32
+            }
+        ]
+
+        Returns an empty list when no chunks pass the relevance
+        threshold.
     """
-    model = SentenceTransformer(EMBEDDING_MODEL)
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
-    collection = client.get_collection(COLLECTION_NAME)
 
+    if not query or not query.strip():
+        return []
+
+    # Convert query into the same embedding space used during ingestion.
     query_embedding = model.encode([query]).tolist()
+
+    # Retrieve candidate chunks.
+    #
+    # We retrieve n_results first and then apply our own relevance
+    # threshold below.
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=n_results,
     )
 
     output = []
+
+    # Chroma returns nested lists because queries can contain multiple
+    # embeddings. We only send one query, so use [0].
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
+    distances = results["distances"][0]
+
     for doc, meta, dist in zip(
-        results["documents"][0], results["metadatas"][0], results["distances"][0]
+        documents,
+        metadatas,
+        distances
     ):
-        output.append({"text": doc, "source": meta["source"], "distance": dist})
+        # Lower cosine distance means greater similarity.
+        if dist <= max_distance:
+            output.append({
+                "text": doc,
+                "source": meta["source"],
+                "distance": dist,
+            })
+
     return output
 
 
+# -------------------------------------------------------------------
+# Standalone CLI test
+# -------------------------------------------------------------------
+
 if __name__ == "__main__":
+
     if len(sys.argv) < 2:
-        print("Usage: python retrieve.py \"your question here\"")
+        print('Usage: python retrieve.py "your question here"')
         sys.exit(1)
+
     query = " ".join(sys.argv[1:])
+
     results = search(query)
 
-    print(f"\nQuery: {query}\n")
-    for i, r in enumerate(results):
-        print(f"--- Result {i+1} (source: {r['source']}, distance: {r['distance']:.4f}) ---")
-        print(r["text"][:300] + ("..." if len(r["text"]) > 300 else ""))
+    print(f"\nQuery: {query}")
+    print(f"Relevant results: {len(results)}\n")
+
+    if not results:
+        print("No relevant documents found in the knowledge base.")
+        sys.exit(0)
+
+    for i, result in enumerate(results):
+
+        print(
+            f"--- Result {i + 1} "
+            f"(source: {result['source']}, "
+            f"distance: {result['distance']:.4f}) ---"
+        )
+
+        text = result["text"]
+
+        print(
+            text[:500] +
+            ("..." if len(text) > 500 else "")
+        )
+
         print()

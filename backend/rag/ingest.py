@@ -140,7 +140,11 @@ def ingest_all_documents():
         client.delete_collection(COLLECTION_NAME)
     except Exception:
         pass
-    collection = client.create_collection(COLLECTION_NAME)
+    
+    collection = client.create_collection(
+        COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"}
+    )
  
     all_chunks = []
     for filename in os.listdir(DATA_DIR):
