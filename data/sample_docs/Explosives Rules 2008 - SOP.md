@@ -1,14 +1,5 @@
 
-
 ## 1
-
-
-
-
-
-
-
-
 
 ## GUIDELINES FOR ISSUING
 ## LICENSES/APPROVALS/
@@ -23,10 +14,6 @@ th
 
 December,  2008  and  subsequently  amended  vide  G.S.R  17(E),  dated  the  9th  January,  2019  shall
 prevail at all the times.
-
-
-
-
 
 
 
@@ -473,12 +460,6 @@ licensee for renewal of license;
 proceedings are pending against the licensed premises.
 (iv)  Documents in support of legal possession of the site.
 (v) Copy of valid quarry lease/work orders.
-
-
-
-
-
-
 
 
 ## 13
@@ -1008,18 +989,6 @@ followed as per rule 111 of Explosives Rules, 2008.
 Procedure to be followed as per rule 109 of Explosives
 ## Rules, 2008.
 
-
-
-
-
-
-
-
-
-
-
-
-
 ## 26
 
 ## GUIDELINES TO BE FOLLOWED FOR ISSUING LICENSES IN
@@ -1172,12 +1141,6 @@ Procedure   to be followed as per rule 109 of Explosives
 
 
 
-
-
-
-
-
-
 ## 30
 
 ## GUIDELINES TO BE FOLLOWED FOR ISSUING LICENSES IN
@@ -1252,10 +1215,6 @@ where explosives to be exported.
 
 - Amendment  of  license: There  is  no  provision  for  amendment  of
 license.
-
-
-
-
 
 
 ## 32

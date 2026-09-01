@@ -1,5 +1,26 @@
-node_modules
-dist
-.DS_Store
+# --- Python ---
+venv/
+__pycache__/
+*.pyc
+.env
+
+# --- Chroma (local vector store data - regenerate, don't commit) ---
+chroma_db/
+*.sqlite3
+
+# --- React / Node ---
+node_modules/
+dist/
+build/
 .env.local
-.env.*.local
+
+# --- Generated demo output (don't commit generated docx/xlsx test files) ---
+outputs/
+*.docx
+*.pptx
+*.xlsx
+
+# --- OS/editor noise ---
+.DS_Store
+.vscode/
+*.log
