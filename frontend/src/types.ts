@@ -1,7 +1,6 @@
 export interface Conversation {
   id: string;
   title: string;
-  timestamp: string; // e.g. "4 min ago" — shown under the title in the sidebar
   active?: boolean;
 }
 
@@ -10,6 +9,11 @@ export interface ToolDef {
   name: string;
   status: 'ready' | 'busy' | 'offline';
   icon: 'search' | 'file' | 'calc' | 'code' | 'artifact';
+}
+
+export interface Source {
+  title: string;
+  location: string;
 }
 
 export interface ChecklistItem {
@@ -54,7 +58,14 @@ export interface KnowledgeBaseStatus {
   lastIndexed: string;
 }
 
-export interface Source {
-  title: string;
+export interface SearchResult {
+  id: string;
+  snippet: string;
+  documentTitle: string;
   location: string;
+}
+
+export interface ReasoningStep {
+  id: string;
+  label: string;
 }

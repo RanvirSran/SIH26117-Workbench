@@ -40,7 +40,6 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
               className={`tool-chip${t.on ? ' on' : ''}`}
               onClick={() => toggleTool(t.id)}
             >
-              <span className="sw" />
               {t.label}
             </span>
           ))}

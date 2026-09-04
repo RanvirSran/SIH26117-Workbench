@@ -57,7 +57,7 @@ export default function EvidencePanel({
             </div>
             <div className="why-row">
               <b>External sources</b>
-              <span>None — internet disabled</span>
+              <span>None. Internet disabled.</span>
             </div>
             <div className="why-excerpt">"{excerpt}"</div>
           </div>

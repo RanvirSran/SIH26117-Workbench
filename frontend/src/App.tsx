@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
-import TopBar from './components/TopBar';
+import HeaderControls from './components/HeaderControls';
 import Sidebar from './components/Sidebar';
 import ChatThread from './components/ChatThread';
 import Composer from './components/Composer';
-import StatusBar from './components/StatusBar';
-import AmbientBackground from './components/AmbientBackground';
-import LoginPage from './pages/LoginPage';
+import SearchOverlay from './components/SearchOverlay';
 import { useTheme } from './hooks/useTheme';
 import { fetchConversationHistory, fetchConversations, fetchKnowledgeBaseStatus, sendMessage } from './api/client';
 import type { ChatMessage, Conversation, KnowledgeBaseStatus } from './types';
@@ -13,21 +11,40 @@ import type { ChatMessage, Conversation, KnowledgeBaseStatus } from './types';
 let messageIdCounter = 0;
 const nextId = () => `m${++messageIdCounter}`;
 
-export default function App() {
+export default function App({ onGoHome }: { onGoHome?: () => void }) {
   const { theme, toggleTheme } = useTheme();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>('');
   const [kbStatus, setKbStatus] = useState<KnowledgeBaseStatus>({
     documentCount: 0,
-    lastIndexed: '—',
+    lastIndexed: 'Not indexed yet',
   });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(272);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth > 860);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    const onResize = () => setIsDesktop(window.innerWidth > 860);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Initial load: conversations + knowledge base status come from the
+  // backend (or mock data, depending on VITE_USE_MOCK_DATA).
+  useEffect(() => {
     fetchConversations().then((convs) => {
       setConversations(convs);
       const active = convs.find((c) => c.active) ?? convs[0];
@@ -37,7 +54,7 @@ export default function App() {
       }
     });
     fetchKnowledgeBaseStatus().then(setKbStatus);
-  }, [isAuthenticated]);
+  }, []);
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId);
 
@@ -75,51 +92,41 @@ export default function App() {
   };
 
   const handleNewConversation = () => {
-    const newConv: Conversation = { id: `local-${Date.now()}`, title: 'New conversation', timestamp: 'Just now' };
+    const newConv: Conversation = { id: `local-${Date.now()}`, title: 'New conversation' };
     setConversations((prev) => [newConv, ...prev]);
     setActiveConversationId(newConv.id);
     setMessages([]);
     // Backend wiring: POST /conversations to persist the new conversation.
   };
 
-  if (!isAuthenticated) {
-    // Placeholder auth — replace with real sign-in call once the backend
-    // exposes an auth endpoint. onSignIn just flips local state for now.
-    return <LoginPage onSignIn={() => setIsAuthenticated(true)} />;
-  }
-
   return (
-    <div className="app">
-      <TopBar
-        workspace="Refinery Ops"
-        model="Local-32B-Instruct"
-        userInitials="RS"
-        theme={theme}
-        toggleTheme={toggleTheme}
-      />
-
+    <div className="app" style={isDesktop ? { gridTemplateColumns: `${sidebarWidth}px 1fr` } : undefined}>
       <Sidebar
+        workspace="Refinery Ops"
         conversations={conversations}
         activeConversationId={activeConversationId}
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
         documentCount={kbStatus.documentCount}
         lastIndexed={kbStatus.lastIndexed}
+        width={sidebarWidth}
+        onWidthChange={setSidebarWidth}
+        onGoHome={onGoHome}
+        onOpenSearch={() => setIsSearchOpen(true)}
       />
 
       <div className="main">
-        <AmbientBackground />
+        <HeaderControls userInitials="RS" theme={theme} toggleTheme={toggleTheme} />
         <ChatThread
           title={activeConversation?.title ?? 'New conversation'}
           workspace="Refinery Ops"
-          model="Local-32B-Instruct"
           messages={messages}
           isLoading={isLoading}
         />
         <Composer onSend={handleSend} disabled={isLoading} />
       </div>
 
-      <StatusBar documentCount={kbStatus.documentCount} version="v0.9.2-onprem" />
+      {isSearchOpen && <SearchOverlay onClose={() => setIsSearchOpen(false)} />}
     </div>
   );
 }

@@ -1,10 +1,10 @@
-import type { ChatMessage, ChatResponse, Conversation, KnowledgeBaseStatus } from '../types';
+import type { ChatMessage, ChatResponse, Conversation, KnowledgeBaseStatus, ReasoningStep, SearchResult } from '../types';
 
 export const mockConversations: Conversation[] = [
-  { id: 'c1', title: 'P-102 shutdown SOP', timestamp: '4 min ago', active: true },
-  { id: 'c2', title: 'LOTO isolation query', timestamp: 'Yesterday' },
-  { id: 'c3', title: 'Vessel inspection rules', timestamp: '2 days ago' },
-  { id: 'c4', title: 'Fire safety drawing review', timestamp: '4 days ago' },
+  { id: 'c1', title: 'P-102 shutdown SOP', active: true },
+  { id: 'c2', title: 'LOTO isolation query' },
+  { id: 'c3', title: 'Vessel inspection rules' },
+  { id: 'c4', title: 'Fire safety drawing review' },
 ];
 
 export const mockKnowledgeBaseStatus: KnowledgeBaseStatus = {
@@ -89,3 +89,61 @@ export function mockChatReply(_message: string): ChatResponse {
     },
   };
 }
+
+// Placeholder search corpus so the search UI is fully demoable before the
+// real /search endpoint exists. Swap mockSearch() for the real API call in
+// src/api/client.ts once it's ready; the SearchResult shape won't change.
+const mockSearchCorpus: SearchResult[] = [
+  {
+    id: 's1',
+    snippet: 'Isolation of upstream and downstream block valves shall be confirmed prior to any maintenance activity, with zero pressure verified at the local gauge before disconnection.',
+    documentTitle: 'P-102 Equipment Manual',
+    location: 'Page 18',
+  },
+  {
+    id: 's2',
+    snippet: 'Lock-out/tag-out devices must remain in place until all affected personnel have signed off and the equipment has been visually confirmed de-energized.',
+    documentTitle: 'LOTO Isolation Procedure',
+    location: 'Section 3.1',
+  },
+  {
+    id: 's3',
+    snippet: 'Pressure vessels operating above design threshold require inspection at intervals not exceeding those set out in the applicable statutory rules.',
+    documentTitle: 'SMPV(U) Rules, 2016',
+    location: 'Section 4.2',
+  },
+  {
+    id: 's4',
+    snippet: 'A hot work permit is required before any welding, cutting, or grinding activity within 15 metres of a flammable storage area.',
+    documentTitle: 'Fire Safety Drawing Review',
+    location: 'Page 4',
+  },
+  {
+    id: 's5',
+    snippet: 'Vent line condition must be confirmed clear of obstruction before depressurization begins, with a secondary check logged by the shift supervisor.',
+    documentTitle: 'Vessel Inspection Rules',
+    location: 'Section 7',
+  },
+];
+
+export function mockSearch(query: string): SearchResult[] {
+  if (!query.trim()) return [];
+  const q = query.toLowerCase();
+  const matches = mockSearchCorpus.filter(
+    (r) => r.snippet.toLowerCase().includes(q) || r.documentTitle.toLowerCase().includes(q)
+  );
+  // Falls back to a representative sample so the demo never shows an empty
+  // state for an unrecognized query; a real backend would return true
+  // relevance-ranked results instead.
+  return matches.length > 0 ? matches : mockSearchCorpus.slice(0, 3);
+}
+
+// Placeholder step sequence for the reasoning panel. A real agent loop will
+// emit these as discrete events; for now they're just timed to appear one
+// at a time so the demo reads as "working", not just a spinner.
+export const mockReasoningSteps: ReasoningStep[] = [
+  { id: 'r1', label: 'Searching knowledge base...' },
+  { id: 'r2', label: 'Found 3 relevant results...' },
+  { id: 'r3', label: 'Cross-checking against source documents...' },
+  { id: 'r4', label: 'Generating answer...' },
+];
