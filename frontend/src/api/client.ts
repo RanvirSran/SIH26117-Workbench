@@ -1,6 +1,6 @@
 import { API_URL, USE_MOCK_DATA } from '../config';
-import { mockChatReply, mockConversations, mockKnowledgeBaseStatus, mockMessageHistory } from '../data/mockData';
-import type { ChatMessage, ChatResponse, Conversation, KnowledgeBaseStatus } from '../types';
+import { mockChatReply, mockConversations, mockKnowledgeBaseStatus, mockMessageHistory, mockSearch } from '../data/mockData';
+import type { ChatMessage, ChatResponse, Conversation, KnowledgeBaseStatus, SearchResult } from '../types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
@@ -55,4 +55,18 @@ export async function fetchConversationHistory(conversationId: string): Promise<
 export async function fetchKnowledgeBaseStatus(): Promise<KnowledgeBaseStatus> {
   if (USE_MOCK_DATA) return mockKnowledgeBaseStatus;
   return request<KnowledgeBaseStatus>('/knowledge-base/status');
+}
+
+/**
+ * Searches across the indexed company document set.
+ * Backend contract: GET {API_URL}/search?q={query}
+ * Expected response shape: SearchResult[] (see src/types.ts)
+ * TODO: swap the mock branch for the real endpoint once it's ready.
+ */
+export async function searchDocuments(query: string): Promise<SearchResult[]> {
+  if (USE_MOCK_DATA) {
+    await new Promise((r) => setTimeout(r, 300));
+    return mockSearch(query);
+  }
+  return request<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`);
 }

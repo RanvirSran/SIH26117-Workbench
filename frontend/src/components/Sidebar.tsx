@@ -1,33 +1,77 @@
-import type { Conversation, ToolDef } from '../types';
-import { IconChat, toolIconMap } from './Icons';
+import { useCallback, useRef, useState } from 'react';
+import type { Conversation } from '../types';
+import { IconSearch } from './Icons';
 
-const tools: ToolDef[] = [
-  { id: 't1', name: 'RAG search', status: 'ready', icon: 'search' },
-  { id: 't2', name: 'File reader', status: 'ready', icon: 'file' },
-  { id: 't3', name: 'Calculator', status: 'ready', icon: 'calc' },
-  { id: 't4', name: 'Code execution', status: 'ready', icon: 'code' },
-  { id: 't5', name: 'Artifact generation', status: 'ready', icon: 'artifact' },
-];
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 420;
 
 interface SidebarProps {
+  workspace: string;
   conversations: Conversation[];
   activeConversationId: string;
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
   documentCount: number;
   lastIndexed: string;
+  width: number;
+  onWidthChange: (width: number) => void;
+  onGoHome?: () => void;
+  onOpenSearch?: () => void;
 }
 
 export default function Sidebar({
+  workspace,
   conversations,
   activeConversationId,
   onSelectConversation,
   onNewConversation,
   documentCount,
   lastIndexed,
+  width,
+  onWidthChange,
+  onGoHome,
+  onOpenSearch,
 }: SidebarProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const startRef = useRef({ x: 0, width });
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    startRef.current = { x: e.clientX, width };
+    setIsDragging(true);
+
+    const onMove = (ev: PointerEvent) => {
+      const delta = ev.clientX - startRef.current.x;
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startRef.current.width + delta));
+      onWidthChange(next);
+    };
+    const onUp = () => {
+      setIsDragging(false);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [width, onWidthChange]);
+
   return (
     <div className="sidebar">
+      <div className="sidebar-brand">
+        <button className="wordmark" onClick={onGoHome} aria-label="Back to AURA home">
+          <span className="mark" />
+          AURA
+        </button>
+        <div className="crumb">
+          Workspace <b>{workspace}</b>
+        </div>
+      </div>
+
+      <button className="search-trigger search-trigger--sidebar" onClick={onOpenSearch} aria-label="Search company documents">
+        <IconSearch />
+        <span>Search documents</span>
+        <span className="search-trigger__kbd">⌘K</span>
+      </button>
+
       <button className="new-chat-btn" onClick={onNewConversation}>
         <span className="plus">+</span> New conversation
       </button>
@@ -40,13 +84,7 @@ export default function Sidebar({
             className={`conv-item${c.id === activeConversationId ? ' active' : ''}`}
             onClick={() => onSelectConversation(c.id)}
           >
-            <span className="conv-ic">
-              <IconChat />
-            </span>
-            <span className="conv-text">
-              <span className="conv-title">{c.title}</span>
-              <span className="conv-time">{c.timestamp}</span>
-            </span>
+            {c.title}
           </div>
         ))}
       </div>
@@ -64,25 +102,6 @@ export default function Sidebar({
         </div>
       </div>
 
-      <div className="side-section">
-        <div className="side-heading">Agents &amp; tools</div>
-        {tools.map((tool) => {
-          const Icon = toolIconMap[tool.icon];
-          return (
-            <div className="tool-row" key={tool.id}>
-              <span className="icon-chip">
-                <Icon />
-              </span>
-              <span className="name">{tool.name}</span>
-              <span className="state-badge-mini">
-                <span className="dot" />
-                Ready
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
       <div className="sidebar-footer">
         <div className="exec-mini">
           <span>Inference</span>
@@ -93,6 +112,14 @@ export default function Sidebar({
           <span>Disabled</span>
         </div>
       </div>
+
+      <div
+        className={`sidebar-resize-handle${isDragging ? ' active' : ''}`}
+        onPointerDown={onPointerDown}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+      />
     </div>
   );
 }
