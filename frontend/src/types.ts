@@ -41,16 +41,26 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'ai';
   text: string;
+  steps?: string[];
+  generated_file?: string | null;
   evidence?: EvidenceData;
   artifact?: ArtifactData;
 }
 
-// Shape returned by POST /chat. Backend devs: match this, or update it to
-// match your actual response and adjust src/api/client.ts accordingly.
+// Raw or mapped shape returned by POST /chat.
 export interface ChatResponse {
-  answer: string;
+  reply?: string;
+  answer?: string;
+  steps?: string[];
+  generated_file?: string | null;
   evidence?: EvidenceData;
   artifact?: ArtifactData;
+}
+
+export interface BackendSearchResult {
+  text: string;
+  source: string;
+  distance: number;
 }
 
 export interface KnowledgeBaseStatus {

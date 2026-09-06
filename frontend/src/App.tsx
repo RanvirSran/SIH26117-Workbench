@@ -67,7 +67,9 @@ export default function App({ onGoHome }: { onGoHome?: () => void }) {
       const aiMessage: ChatMessage = {
         id: nextId(),
         role: 'ai',
-        text: response.answer,
+        text: response.answer || response.reply || 'No answer returned.',
+        steps: response.steps,
+        generated_file: response.generated_file,
         evidence: response.evidence,
         artifact: response.artifact,
       };

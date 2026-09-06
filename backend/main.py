@@ -56,7 +56,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(_THIS_DIR, "rag"))
 sys.path.append(os.path.join(_THIS_DIR, "agent"))
 
-from retrieve import search as rag_search
+from retrieve import search as rag_search, get_kb_count
 from agent import run_agent
 
 app = FastAPI(title="SIH26117 - Sovereign AI Workbench (Day 1 scaffold)")
@@ -110,6 +110,11 @@ class SearchResponse(BaseModel):
     results: list[SearchResult]
 
 
+class KBStatusResponse(BaseModel):
+    documentCount: int
+    lastIndexed: str
+
+
 @app.get("/health")
 def health_check():
     """
@@ -119,6 +124,18 @@ def health_check():
     vs "FastAPI is fine but Ollama isn't responding."
     """
     return {"status": "FastAPI is running"}
+
+
+@app.get("/knowledge-base/status", response_model=KBStatusResponse)
+def knowledge_base_status():
+    """
+    Returns total document/chunk count in local vector index.
+    """
+    count = get_kb_count()
+    return KBStatusResponse(
+        documentCount=count,
+        lastIndexed="Active local index"
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
