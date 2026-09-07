@@ -74,7 +74,8 @@ MODEL_NAME = "llama3.2:3b"
 llm = ChatOllama(
     model=MODEL_NAME,
     temperature=0,
-    num_predict=800,
+    num_predict=500,
+    timeout=120.0,
 )
 
 
@@ -268,6 +269,35 @@ _normal_agent = build_normal_agent()
 # DIRECT RAG
 # =====================================================================
 
+def clean_search_query(message: str) -> str:
+    stop_phrases = [
+        "generate a word document summarizing",
+        "generate a word document on",
+        "generate a word doc summarizing",
+        "generate a word doc on",
+        "create a word document on",
+        "make a word document on",
+        "export as word",
+        "put this in excel",
+        "put this into excel",
+        "generate an excel spreadsheet on",
+        "generate an excel on",
+        "create an excel spreadsheet on",
+        "give me a document summarizing",
+        "give me a report on",
+        "generate a word document",
+        "generate a docx",
+        "generate an excel",
+        "summarizing",
+        "summarize",
+    ]
+    cleaned = message.lower()
+    for phrase in stop_phrases:
+        cleaned = cleaned.replace(phrase, "")
+    cleaned = cleaned.strip(" :.-")
+    return cleaned if len(cleaned) > 2 else message
+
+
 def retrieve_for_file(message: str) -> tuple[str, list]:
     """
     Retrieve source material directly for a file-generation request.
@@ -276,12 +306,12 @@ def retrieve_for_file(message: str) -> tuple[str, list]:
         formatted_context
         raw_results
     """
+    search_term = clean_search_query(message)
 
     try:
-        results = rag_search(
-            message,
-            n_results=3
-        )
+        results = rag_search(search_term, n_results=5, max_distance=0.8)
+        if not results and search_term != message:
+            results = rag_search(message, n_results=5, max_distance=0.8)
     except Exception as exc:
         raise RuntimeError(
             f"Knowledge base search failed: {exc}"

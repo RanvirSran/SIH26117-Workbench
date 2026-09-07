@@ -131,6 +131,14 @@ def search(
     return output
 
 
+def get_kb_count() -> int:
+    """Return total number of chunks indexed in ChromaDB."""
+    try:
+        return collection.count()
+    except Exception:
+        return 0
+
+
 # -------------------------------------------------------------------
 # Standalone CLI test
 # -------------------------------------------------------------------

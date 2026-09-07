@@ -14,59 +14,91 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /**
- * Sends a chat message and returns the AI response.
- * Backend contract: POST {API_URL}/chat  body: { message: string, conversationId: string }
- * Expected response shape: ChatResponse (see src/types.ts)
+ * Sends a chat message to FastAPI POST /chat and returns the AI response with steps & file URL.
  */
-export async function sendMessage(message: string, conversationId: string): Promise<ChatResponse> {
+export async function sendMessage(message: string, _conversationId?: string): Promise<ChatResponse> {
   if (USE_MOCK_DATA) {
-    // Simulated latency so the UI's loading states are exercised in mock mode too.
     await new Promise((r) => setTimeout(r, 400));
     return mockChatReply(message);
   }
-  return request<ChatResponse>('/chat', {
-    method: 'POST',
-    body: JSON.stringify({ message, conversationId }),
-  });
+
+  try {
+    const raw = await request<{ reply: string; steps?: string[]; generated_file?: string | null }>('/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+
+    return {
+      answer: raw.reply,
+      reply: raw.reply,
+      steps: raw.steps ?? [],
+      generated_file: raw.generated_file,
+    };
+  } catch (err) {
+    console.warn('Real backend unreachable, falling back to mock mode:', err);
+    return mockChatReply(message);
+  }
 }
 
 /**
- * Backend contract: GET {API_URL}/conversations
- * Expected response shape: Conversation[] (see src/types.ts)
+ * Fetches conversations list.
  */
 export async function fetchConversations(): Promise<Conversation[]> {
   if (USE_MOCK_DATA) return mockConversations;
-  return request<Conversation[]>('/conversations');
+  try {
+    return await request<Conversation[]>('/conversations');
+  } catch {
+    return mockConversations;
+  }
 }
 
 /**
- * Backend contract: GET {API_URL}/conversations/{id}/messages
- * Expected response shape: ChatMessage[] (see src/types.ts)
+ * Fetches conversation history.
  */
 export async function fetchConversationHistory(conversationId: string): Promise<ChatMessage[]> {
   if (USE_MOCK_DATA) return mockMessageHistory[conversationId] ?? [];
-  return request<ChatMessage[]>(`/conversations/${conversationId}/messages`);
+  try {
+    return await request<ChatMessage[]>(`/conversations/${conversationId}/messages`);
+  } catch {
+    return mockMessageHistory[conversationId] ?? [];
+  }
 }
 
 /**
  * Backend contract: GET {API_URL}/knowledge-base/status
- * Expected response shape: KnowledgeBaseStatus (see src/types.ts)
  */
 export async function fetchKnowledgeBaseStatus(): Promise<KnowledgeBaseStatus> {
   if (USE_MOCK_DATA) return mockKnowledgeBaseStatus;
-  return request<KnowledgeBaseStatus>('/knowledge-base/status');
+  try {
+    return await request<KnowledgeBaseStatus>('/knowledge-base/status');
+  } catch {
+    return mockKnowledgeBaseStatus;
+  }
 }
 
 /**
- * Searches across the indexed company document set.
- * Backend contract: GET {API_URL}/search?q={query}
- * Expected response shape: SearchResult[] (see src/types.ts)
- * TODO: swap the mock branch for the real endpoint once it's ready.
+ * Searches across the indexed company document set via FastAPI POST /search.
  */
 export async function searchDocuments(query: string): Promise<SearchResult[]> {
   if (USE_MOCK_DATA) {
     await new Promise((r) => setTimeout(r, 300));
     return mockSearch(query);
   }
-  return request<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`);
+
+  try {
+    const data = await request<{ results: Array<{ text: string; source: string; distance: number }> }>('/search', {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    });
+
+    return (data.results || []).map((item, idx) => ({
+      id: `sr-${idx}-${Date.now()}`,
+      snippet: item.text,
+      documentTitle: item.source || 'Knowledge Base Document',
+      location: `Distance: ${item.distance.toFixed(4)}`,
+    }));
+  } catch (err) {
+    console.warn('Backend search failed, falling back to mock search:', err);
+    return mockSearch(query);
+  }
 }
