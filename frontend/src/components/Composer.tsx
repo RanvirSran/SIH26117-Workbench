@@ -1,51 +1,94 @@
-import { useState } from 'react';
-import { IconSend } from './Icons';
-
-interface ToolToggle {
-  id: string;
-  label: string;
-  on: boolean;
-}
+import { useRef, useState } from 'react';
+import { IconSend, IconPlus, IconX, IconPaperclip } from './Icons';
+import { uploadFile } from '../api/client';
+import type { Attachment } from '../types';
 
 interface ComposerProps {
-  onSend: (message: string) => void;
+  onSend: (message: string, attachments: Attachment[]) => void;
   disabled?: boolean;
 }
 
+const ACCEPT = '.txt,.md,.xlsx,.doc,.docx,.pdf';
+
 export default function Composer({ onSend, disabled }: ComposerProps) {
   const [value, setValue] = useState('');
-  const [tools, setTools] = useState<ToolToggle[]>([
-    { id: 'rag', label: 'RAG', on: true },
-    { id: 'attach', label: 'Attach file', on: false },
-    { id: 'code', label: 'Code execution', on: false },
-  ]);
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const toggleTool = (id: string) => {
-    setTools((prev) => prev.map((t) => (t.id === id ? { ...t, on: !t.on } : t)));
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      const uploaded = await Promise.all(Array.from(files).map((f) => uploadFile(f)));
+      setPendingAttachments((prev) => [...prev, ...uploaded]);
+    } catch (err) {
+      console.error('File upload failed:', err);
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const removeAttachment = (name: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.name !== name));
   };
 
   const handleSend = () => {
-    if (!value.trim() || disabled) return;
-    onSend(value.trim());
+    if (disabled) return;
+    if (!value.trim() && pendingAttachments.length === 0) return;
+    onSend(value.trim(), pendingAttachments);
     setValue('');
+    setPendingAttachments([]);
   };
 
   return (
     <div className="composer-wrap">
       <div className="composer">
-        <div className="composer-tools">
-          {tools.map((t) => (
-            <span
-              key={t.id}
-              className={`tool-chip${t.on ? ' on' : ''}`}
-              onClick={() => toggleTool(t.id)}
-            >
-              {t.label}
-            </span>
-          ))}
-        </div>
+        {pendingAttachments.length > 0 && (
+          <div className="composer-attachments">
+            {pendingAttachments.map((att) => (
+              <div className="attachment-chip attachment-chip--pending" key={att.name}>
+                <IconPaperclip />
+                <span>{att.name}</span>
+                <button
+                  className="attachment-chip__remove"
+                  onClick={() => removeAttachment(att.name)}
+                  aria-label={`Remove ${att.name}`}
+                  type="button"
+                >
+                  <IconX />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="composer-box">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPT}
+            multiple
+            hidden
+            onChange={handleFileChange}
+          />
+          <button
+            className="composer-attach"
+            onClick={handleAttachClick}
+            aria-label="Attach a file"
+            disabled={disabled || isUploading}
+            type="button"
+          >
+            <IconPlus />
+          </button>
+
           <textarea
             className="composer-input"
             placeholder="Ask about your local knowledge base…"
@@ -60,7 +103,12 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
               }
             }}
           />
-          <button className="composer-send" onClick={handleSend} aria-label="Send message" disabled={disabled}>
+          <button
+            className="composer-send"
+            onClick={handleSend}
+            aria-label="Send message"
+            disabled={disabled || isUploading}
+          >
             <IconSend />
           </button>
         </div>

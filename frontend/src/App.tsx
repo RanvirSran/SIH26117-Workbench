@@ -5,11 +5,23 @@ import ChatThread from './components/ChatThread';
 import Composer from './components/Composer';
 import SearchOverlay from './components/SearchOverlay';
 import { useTheme } from './hooks/useTheme';
-import { fetchConversationHistory, fetchConversations, fetchKnowledgeBaseStatus, sendMessage } from './api/client';
-import type { ChatMessage, Conversation, KnowledgeBaseStatus } from './types';
+import { fetchConversationHistory, fetchConversations, fetchKnowledgeBaseStatus, sendMessageStream } from './api/client';
+import type { Attachment, ChatMessage, Conversation, KnowledgeBaseStatus } from './types';
 
 let messageIdCounter = 0;
 const nextId = () => `m${++messageIdCounter}`;
+
+// Turns the first user message of a new conversation into a short title,
+// the same way most chat apps do it - no backend/model call needed for
+// something this cheap. Falls back to "New conversation" if the message
+// is empty (e.g. an attachment-only send).
+function titleFromMessage(text: string): string {
+  const trimmed = text.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return 'New conversation';
+  const words = trimmed.split(' ');
+  const short = words.slice(0, 8).join(' ');
+  return words.length > 8 ? `${short}…` : short;
+}
 
 export default function App({ onGoHome }: { onGoHome?: () => void }) {
   const { theme, toggleTheme } = useTheme();
@@ -21,6 +33,7 @@ export default function App({ onGoHome }: { onGoHome?: () => void }) {
   });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [liveSteps, setLiveSteps] = useState<string[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(272);
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth > 860);
@@ -54,16 +67,43 @@ export default function App({ onGoHome }: { onGoHome?: () => void }) {
       }
     });
     fetchKnowledgeBaseStatus().then(setKbStatus);
+    // Knowledge-base status can change as documents are indexed in the
+    // background; refresh it periodically instead of only once on load.
+    const interval = setInterval(() => {
+      fetchKnowledgeBaseStatus().then(setKbStatus);
+    }, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId);
 
-  const handleSend = async (text: string) => {
-    const userMessage: ChatMessage = { id: nextId(), role: 'user', text };
+  const handleSend = async (text: string, attachments: Attachment[] = []) => {
+    const userMessage: ChatMessage = {
+      id: nextId(),
+      role: 'user',
+      text,
+      attachments: attachments.length > 0 ? attachments : undefined,
+    };
     setMessages((prev) => [...prev, userMessage]);
+
+    // First message in a fresh "New conversation" gets a real title,
+    // the same way most chat apps derive one - purely local/frontend
+    // for now, since there's no backend conversation persistence yet
+    // (see handleNewConversation below).
+    const isFirstMessage = messages.length === 0;
+    if (isFirstMessage && text.trim()) {
+      const title = titleFromMessage(text);
+      setConversations((prev) => prev.map((c) => (c.id === activeConversationId ? { ...c, title } : c)));
+    }
+
     setIsLoading(true);
+    setLiveSteps([]);
     try {
-      const response = await sendMessage(text, activeConversationId);
+      const response = await sendMessageStream(
+        text,
+        (stepText) => setLiveSteps((prev) => [...prev, stepText]),
+        activeConversationId
+      );
       const aiMessage: ChatMessage = {
         id: nextId(),
         role: 'ai',
@@ -84,6 +124,7 @@ export default function App({ onGoHome }: { onGoHome?: () => void }) {
       console.error(err);
     } finally {
       setIsLoading(false);
+      setLiveSteps([]);
     }
   };
 
@@ -101,6 +142,24 @@ export default function App({ onGoHome }: { onGoHome?: () => void }) {
     // Backend wiring: POST /conversations to persist the new conversation.
   };
 
+  const handleDeleteConversation = (id: string) => {
+    setConversations((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      if (id === activeConversationId) {
+        const fallback = next[0];
+        if (fallback) {
+          setActiveConversationId(fallback.id);
+          fetchConversationHistory(fallback.id).then(setMessages);
+        } else {
+          setActiveConversationId('');
+          setMessages([]);
+        }
+      }
+      return next;
+    });
+    // Backend wiring: DELETE /conversations/{id} to persist the removal.
+  };
+
   return (
     <div className="app" style={isDesktop ? { gridTemplateColumns: `${sidebarWidth}px 1fr` } : undefined}>
       <Sidebar
@@ -109,6 +168,7 @@ export default function App({ onGoHome }: { onGoHome?: () => void }) {
         activeConversationId={activeConversationId}
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
+        onDeleteConversation={handleDeleteConversation}
         documentCount={kbStatus.documentCount}
         lastIndexed={kbStatus.lastIndexed}
         width={sidebarWidth}
@@ -124,6 +184,7 @@ export default function App({ onGoHome }: { onGoHome?: () => void }) {
           workspace="Refinery Ops"
           messages={messages}
           isLoading={isLoading}
+          liveSteps={liveSteps}
         />
         <Composer onSend={handleSend} disabled={isLoading} />
       </div>

@@ -40,13 +40,16 @@ working - mismatched paths here would mean the agent reports a file
 was generated but /download/ 404s on it.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import requests
+import json
 import sys
 import os
+import re
+import uuid
 
 # Makes rag/ and agent/ importable from here. main.py sits directly in
 # backend/, so both are simple children of this file's own directory -
@@ -56,8 +59,8 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(_THIS_DIR, "rag"))
 sys.path.append(os.path.join(_THIS_DIR, "agent"))
 
-from retrieve import search as rag_search, get_kb_count
-from agent import run_agent
+from retrieve import search as rag_search, get_kb_count, get_document_count
+from agent import run_agent, run_agent_stream
 
 app = FastAPI(title="SIH26117 - Sovereign AI Workbench (Day 1 scaffold)")
 
@@ -85,6 +88,21 @@ MODEL_NAME = "llama3.2:3b"  # change this if you pulled a different model
 # at the repo root instead of backend/.
 GENERATED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated")
 
+# Where the RAG knowledge-base source documents actually live (the same
+# folder ingest.py reads from). Used by GET /kb-docs/{filename} so a
+# citation in the UI can open the real source document, not just name it.
+DATA_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "sample_docs"
+)
+
+# Where files the USER attaches to a chat message get saved. Separate
+# from GENERATED_DIR (agent output) and DATA_DIR (knowledge base) since
+# these are neither - just ephemeral chat attachments.
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".md", ".xlsx", ".doc", ".docx", ".pdf"}
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -94,6 +112,7 @@ class ChatResponse(BaseModel):
     reply: str
     steps: list[str] = []
     generated_file: str | None = None  # e.g. "/download/Notice_of_Disease_20260901_140212.docx"
+    evidence: dict | None = None  # sources/excerpt/etc - see agent.build_evidence()
 
 
 class SearchRequest(BaseModel):
@@ -129,9 +148,12 @@ def health_check():
 @app.get("/knowledge-base/status", response_model=KBStatusResponse)
 def knowledge_base_status():
     """
-    Returns total document/chunk count in local vector index.
+    Returns the real, current count of DISTINCT source documents in
+    the local vector index (not chunks - get_document_count() dedupes
+    by source filename, see retrieve.py for why that distinction
+    matters).
     """
-    count = get_kb_count()
+    count = get_document_count()
     return KBStatusResponse(
         documentCount=count,
         lastIndexed="Active local index"
@@ -164,6 +186,46 @@ def chat(request: ChatRequest):
         reply=result["reply"],
         steps=result["steps"],
         generated_file=generated_file_url,
+        evidence=result.get("evidence"),
+    )
+
+
+@app.post("/chat/stream")
+def chat_stream(request: ChatRequest):
+    """
+    Same agent pipeline as POST /chat, but streamed as Server-Sent
+    Events so the frontend can show each reasoning step the moment it
+    actually happens instead of a canned loading placeholder.
+
+    Each event is one line: `data: <json>\\n\\n`, matching the SSE
+    spec so the browser's EventSource-style parsing (or a manual
+    fetch + ReadableStream reader, which is what the frontend uses so
+    it can POST a body) works without extra framing.
+
+    Event shapes:
+        {"type": "step", "text": "..."}
+        {"type": "final", "reply": "...", "steps": [...],
+         "generated_file": "/download/..." | null,
+         "evidence": {...} | null}
+    """
+
+    def event_stream():
+        for event in run_agent_stream(request.message):
+            if event["type"] == "final" and event.get("generated_file"):
+                basename = os.path.basename(event["generated_file"])
+                event = {**event, "generated_file": f"/download/{basename}"}
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # nginx-specific, harmless elsewhere: stops a reverse proxy
+            # from buffering the whole response before sending it on,
+            # which would defeat the point of streaming.
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -199,6 +261,97 @@ def download_file(filename: str):
     resolved = os.path.realpath(filepath)
 
     if not resolved.startswith(os.path.realpath(GENERATED_DIR) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(resolved, filename=safe_name)
+
+
+@app.get("/kb-docs/{filename}")
+def get_kb_document(filename: str):
+    """
+    Serves an original source document from the knowledge base
+    (data/sample_docs/) so a citation/source card in the UI can open
+    the actual regulation/SOP it's quoting, not just name it.
+
+    Same path-traversal guard as /download/{filename} above - filename
+    comes from a citation the model attached to its own answer, so
+    it's model-controllable input and gets the same basename +
+    resolved-path check before anything is served.
+    """
+    safe_name = os.path.basename(filename)
+    filepath = os.path.join(DATA_DIR, safe_name)
+    resolved = os.path.realpath(filepath)
+
+    if not resolved.startswith(os.path.realpath(DATA_DIR) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="Source document not found")
+
+    return FileResponse(resolved, filename=safe_name)
+
+
+class UploadResponse(BaseModel):
+    filename: str
+    url: str
+    size: int
+
+
+@app.post("/upload", response_model=UploadResponse)
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Accepts a file attached to the composer (.txt/.md/.xlsx/.doc/
+    .docx/.pdf) and saves it under UPLOAD_DIR so it can be linked back
+    to and downloaded from the chat thread.
+
+    NOTE - scope: this makes attachments uploadable and shareable in
+    the thread, which is what was asked for. It does NOT yet feed the
+    file's contents into the agent's RAG/reasoning pipeline - the
+    agent still only searches the indexed knowledge base. Wiring an
+    attachment into a single turn's context is a reasonable next step
+    but a separate piece of work from "make the attach button work".
+    """
+    original_name = file.filename or "attachment"
+    ext = os.path.splitext(original_name)[1].lower()
+
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file type '{ext}'. Allowed: "
+                f"{', '.join(sorted(ALLOWED_UPLOAD_EXTENSIONS))}"
+            ),
+        )
+
+    # Prefix with a short random id so two people attaching
+    # "checklist.pdf" on the same day don't clobber each other, while
+    # keeping the original name (sanitized) visible/downloadable.
+    safe_original = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(original_name))
+    stored_name = f"{uuid.uuid4().hex[:8]}_{safe_original}"
+    dest_path = os.path.join(UPLOAD_DIR, stored_name)
+
+    contents = await file.read()
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    return UploadResponse(
+        filename=original_name,
+        url=f"/uploads/{stored_name}",
+        size=len(contents),
+    )
+
+
+@app.get("/uploads/{filename}")
+def get_uploaded_file(filename: str):
+    """Serves a file previously saved by POST /upload."""
+    safe_name = os.path.basename(filename)
+    filepath = os.path.join(UPLOAD_DIR, safe_name)
+    resolved = os.path.realpath(filepath)
+
+    if not resolved.startswith(os.path.realpath(UPLOAD_DIR) + os.sep):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     if not os.path.isfile(resolved):

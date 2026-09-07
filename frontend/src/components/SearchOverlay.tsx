@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { IconSearch, IconFile } from './Icons';
 import { searchDocuments } from '../api/client';
+import { API_URL } from '../config';
 import type { SearchResult } from '../types';
 
 interface SearchOverlayProps {
@@ -69,16 +70,33 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
           {!isSearching && hasSearched && results.length === 0 && (
             <div className="search-overlay__empty">No matches found.</div>
           )}
-          {!isSearching && results.map((r) => (
-            <div className="search-result" key={r.id}>
-              <div className="search-result__snippet">{r.snippet}</div>
-              <div className="search-result__source">
-                <IconFile />
-                <span>{r.documentTitle}</span>
-                <span className="search-result__loc">{r.location}</span>
+          {!isSearching && results.map((r) => {
+            const content = (
+              <>
+                <div className="search-result__snippet">{r.snippet}</div>
+                <div className="search-result__source">
+                  <IconFile />
+                  <span>{r.documentTitle}</span>
+                  <span className="search-result__loc">{r.location}</span>
+                </div>
+              </>
+            );
+            return r.url ? (
+              <a
+                className="search-result"
+                key={r.id}
+                href={`${API_URL}${r.url}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {content}
+              </a>
+            ) : (
+              <div className="search-result" key={r.id}>
+                {content}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

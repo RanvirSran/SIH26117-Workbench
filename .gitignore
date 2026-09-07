@@ -20,6 +20,7 @@ outputs/
 *.pptx
 *.xlsx
 generated/
+backend/uploads/
 
 # --- OS/editor noise ---
 .DS_Store

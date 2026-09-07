@@ -139,6 +139,26 @@ def get_kb_count() -> int:
         return 0
 
 
+def get_document_count() -> int:
+    """
+    Return the number of DISTINCT source documents indexed, not the
+    number of chunks. get_kb_count() above counts chunks (a single
+    PDF can produce hundreds of them), which is the wrong number to
+    show a user as "documents indexed" - this counts unique values of
+    the `source` metadata field instead.
+
+    Pulls all metadatas back from Chroma (cheap - just the metadata
+    column, not embeddings/documents) and counts unique `source`
+    values.
+    """
+    try:
+        all_rows = collection.get(include=["metadatas"])
+        sources = {m["source"] for m in all_rows.get("metadatas", []) if m and m.get("source")}
+        return len(sources)
+    except Exception:
+        return 0
+
+
 # -------------------------------------------------------------------
 # Standalone CLI test
 # -------------------------------------------------------------------

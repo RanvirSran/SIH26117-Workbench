@@ -14,6 +14,8 @@ export interface ToolDef {
 export interface Source {
   title: string;
   location: string;
+  /** Relative URL (resolved against API_URL) that opens the actual source document. */
+  url?: string;
 }
 
 export interface ChecklistItem {
@@ -22,60 +24,70 @@ export interface ChecklistItem {
   done: boolean;
 }
 
-// --- POST-DEMO: richer evidence card (source count, chunk count, retrieval
-// timing, per-source section/page location) — backend doesn't compute this
-// yet. See /areas/sih2026-post-demo-ideas.md for the plan to add real
-// instrumentation to retrieve.py before reviving this.
-// export interface EvidenceData {
-//   sourceCount: number;
-//   chunkCount: number;
-//   retrievalMs: number;
-//   sources: Source[];
-//   documentsInIndex: number;
-//   excerpt: string;
-// }
+export interface EvidenceData {
+  sourceCount: number;
+  chunkCount: number;
+  retrievalMs: number;
+  sources: Source[];
+  documentsInIndex: number;
+  excerpt: string;
+}
 
-// --- POST-DEMO: structured checklist artifact — backend's docgen/xlsxgen
-// tools return a downloadable file, not structured checklist items. Either
-// revive this once docgen is changed to also emit structured data, or drop
-// it in favor of a permanent simple "generated file" download link.
-// export interface ArtifactData {
-//   title: string;
-//   items: ChecklistItem[];
-//   sourcesLine: string;
-// }
+export interface ArtifactData {
+  title: string;
+  items: ChecklistItem[];
+  sourcesLine: string;
+}
+
+/** A file the user attached to a chat message via the composer's "+" button. */
+export interface Attachment {
+  name: string;
+  url: string;
+  size?: number;
+}
 
 export interface ChatMessage {
   id: string;
   role: 'user' | 'ai';
   text: string;
-  steps?: string[];        // reasoning trace — flat list of strings, matches backend's `steps`
-  generatedFile?: string;  // download URL (e.g. "/download/foo.docx"), if the agent generated a file
-  // evidence?: EvidenceData;  // POST-DEMO — see above
-  // artifact?: ArtifactData;  // POST-DEMO — see above
+  steps?: string[];               // reasoning trace — flat list of strings, matches backend's `steps`
+  generated_file?: string | null; // download URL (e.g. "/download/foo.docx"), if the agent generated a file
+  evidence?: EvidenceData | null; // sources/excerpt backing an answer, from backend's agent.build_evidence()
+  artifact?: ArtifactData;        // structured checklist artifact (demo/mock data path)
+  attachments?: Attachment[];     // files the user attached when sending this message
 }
 
-// Shape returned by POST /chat. Matches backend/main.py's ChatResponse exactly.
+// Shape returned by POST /chat and streamed (as the "final" event) by
+// POST /chat/stream. Matches backend/main.py's ChatResponse, plus the
+// mock-mode-only `answer`/`artifact` fields the frontend also accepts.
 export interface ChatResponse {
   reply: string;
+  answer?: string; // used by mock data; sendMessage() normalizes reply/answer into one field
   steps: string[];
   generated_file?: string | null;
+  evidence?: EvidenceData | null;
+  artifact?: ArtifactData;
 }
+
+/** One event from the POST /chat/stream Server-Sent Events stream. */
+export type ChatStreamEvent =
+  | { type: 'step'; text: string }
+  | ({ type: 'final' } & ChatResponse);
 
 export interface KnowledgeBaseStatus {
   documentCount: number;
   lastIndexed: string;
 }
 
-// Shape returned by POST /search. Matches backend/main.py's SearchResult exactly
-// (text/source/distance) — `id` is generated client-side since the backend
-// doesn't provide one, and `location` (section/page) isn't available yet.
+// Shape returned by POST /search, adapted client-side. `id` is
+// generated client-side since the backend doesn't provide one.
 export interface SearchResult {
   id: string;
   snippet: string;        // ← backend's `text`
   documentTitle: string;  // ← backend's `source`
-  distance: number;
-  // location?: string;    // POST-DEMO — needs per-chunk section/page metadata from retrieve.py
+  location: string;       // human-readable location/relevance label
+  distance?: number;
+  url?: string;           // opens the real source document, e.g. "/kb-docs/<file>"
 }
 
 export interface ReasoningStep {
