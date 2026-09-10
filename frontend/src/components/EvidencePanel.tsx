@@ -1,4 +1,5 @@
-import { API_URL } from '../config';
+import { useState } from 'react';
+import DocumentPreviewModal from './DocumentPreviewModal';
 import type { Source } from '../types';
 
 interface EvidencePanelProps {
@@ -10,11 +11,6 @@ interface EvidencePanelProps {
   excerpt: string;
 }
 
-function sourceHref(source: Source): string | undefined {
-  if (!source.url) return undefined;
-  return `${API_URL}${source.url}`;
-}
-
 export default function EvidencePanel({
   sourceCount,
   chunkCount,
@@ -23,6 +19,7 @@ export default function EvidencePanel({
   documentsInIndex,
   excerpt,
 }: EvidencePanelProps) {
+  const [previewSource, setPreviewSource] = useState<Source | null>(null);
   const sectionsUsed = sources.map((s) => `${s.title} ${s.location}`).join(' · ');
 
   return (
@@ -39,25 +36,19 @@ export default function EvidencePanel({
 
       <div className="evidence-body">
         <div className="source-grid">
-          {sources.map((s) => {
-            const href = sourceHref(s);
-            const inner = (
-              <>
-                <div className="src-title">{s.title}</div>
-                <div className="src-loc">{s.location}</div>
-                {href && <div className="src-link">Open source document →</div>}
-              </>
-            );
-            return href ? (
-              <a className="source-card" key={s.title} href={href} target="_blank" rel="noreferrer">
-                {inner}
-              </a>
-            ) : (
-              <div className="source-card" key={s.title}>
-                {inner}
-              </div>
-            );
-          })}
+          {sources.map((s) => (
+            <button
+              className="source-card"
+              key={s.title}
+              onClick={() => s.url && setPreviewSource(s)}
+              disabled={!s.url}
+              type="button"
+            >
+              <div className="src-title">{s.title}</div>
+              <div className="src-loc">{s.location}</div>
+              {s.url && <div className="src-link">Preview source →</div>}
+            </button>
+          ))}
         </div>
 
         <details className="why-toggle">
@@ -81,6 +72,14 @@ export default function EvidencePanel({
           </div>
         </details>
       </div>
+
+      {previewSource && (
+        <DocumentPreviewModal
+          filename={previewSource.title}
+          highlight={previewSource.snippet}
+          onClose={() => setPreviewSource(null)}
+        />
+      )}
     </div>
   );
 }

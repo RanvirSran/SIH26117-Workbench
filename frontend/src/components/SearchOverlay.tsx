@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { IconSearch, IconFile } from './Icons';
+import DocumentPreviewModal from './DocumentPreviewModal';
 import { searchDocuments } from '../api/client';
-import { API_URL } from '../config';
 import type { SearchResult } from '../types';
 
 interface SearchOverlayProps {
@@ -13,6 +13,7 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [previewResult, setPreviewResult] = useState<SearchResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -21,11 +22,17 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (previewResult) {
+          setPreviewResult(null);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, previewResult]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -82,15 +89,14 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
               </>
             );
             return r.url ? (
-              <a
+              <button
                 className="search-result"
                 key={r.id}
-                href={`${API_URL}${r.url}`}
-                target="_blank"
-                rel="noreferrer"
+                onClick={() => setPreviewResult(r)}
+                type="button"
               >
                 {content}
-              </a>
+              </button>
             ) : (
               <div className="search-result" key={r.id}>
                 {content}
@@ -99,6 +105,14 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
           })}
         </div>
       </div>
+
+      {previewResult && previewResult.url && (
+        <DocumentPreviewModal
+          filename={previewResult.documentTitle}
+          highlight={previewResult.snippet}
+          onClose={() => setPreviewResult(null)}
+        />
+      )}
     </div>
   );
 }

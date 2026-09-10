@@ -16,6 +16,8 @@ export interface Source {
   location: string;
   /** Relative URL (resolved against API_URL) that opens the actual source document. */
   url?: string;
+  /** The actual retrieved chunk text for this source, used to highlight it in the preview. */
+  snippet?: string;
 }
 
 export interface ChecklistItem {

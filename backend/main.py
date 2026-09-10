@@ -60,6 +60,7 @@ sys.path.append(os.path.join(_THIS_DIR, "rag"))
 sys.path.append(os.path.join(_THIS_DIR, "agent"))
 
 from retrieve import search as rag_search, get_kb_count, get_document_count
+from ingest import extract_text, strip_repeated_lines
 from agent import run_agent, run_agent_stream
 
 app = FastAPI(title="SIH26117 - Sovereign AI Workbench (Day 1 scaffold)")
@@ -292,6 +293,42 @@ def get_kb_document(filename: str):
         raise HTTPException(status_code=404, detail="Source document not found")
 
     return FileResponse(resolved, filename=safe_name)
+
+
+class KbDocContent(BaseModel):
+    filename: str
+    text: str
+
+
+@app.get("/kb-docs/{filename}/content", response_model=KbDocContent)
+def get_kb_document_content(filename: str):
+    """
+    Returns extracted plain text for a knowledge-base source document,
+    for the frontend's in-app preview panel (req: don't just force a
+    file download when someone clicks a citation - show them the
+    actual passage in place, themed like the rest of the app).
+
+    Reuses ingest.py's own extract_text()/strip_repeated_lines() so
+    what's shown here matches what was actually indexed as closely as
+    possible - same path-traversal guard as the two endpoints above.
+    """
+    safe_name = os.path.basename(filename)
+    filepath = os.path.join(DATA_DIR, safe_name)
+    resolved = os.path.realpath(filepath)
+
+    if not resolved.startswith(os.path.realpath(DATA_DIR) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="Source document not found")
+
+    try:
+        text = extract_text(resolved)
+        text = strip_repeated_lines(text)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to extract document text: {exc}")
+
+    return KbDocContent(filename=safe_name, text=text)
 
 
 class UploadResponse(BaseModel):

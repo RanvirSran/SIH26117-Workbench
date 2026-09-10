@@ -34,6 +34,7 @@ The actual file-generation functions live in docgen.py and xlsxgen.py.
 """
 
 import os
+import re
 import sys
 import time
 
@@ -108,12 +109,20 @@ def build_evidence(results: list, retrieval_ms: float) -> dict | None:
         distance = r.get("distance", 0) or 0
         relevance_pct = max(0, min(100, round((1 - distance) * 100)))
 
+        snippet = (r.get("text", "") or "").strip()
+        if len(snippet) > 500:
+            snippet = snippet[:500].rstrip() + "..."
+
         sources.append({
             "title": title,
             "location": f"Relevance {relevance_pct}%",
             # Frontend resolves this against API_URL and opens it directly -
             # see GET /kb-docs/{filename} in main.py.
             "url": f"/kb-docs/{title}",
+            # The actual retrieved chunk text for this specific source, so
+            # the frontend's preview modal can highlight exactly what was
+            # cited instead of just opening the document at the top.
+            "snippet": snippet,
         })
 
     excerpt = (results[0].get("text", "") or "").strip()
@@ -485,6 +494,88 @@ a Word document.
     return str(content).strip()
 
 # =====================================================================
+# DOCUMENT TITLE DERIVATION
+# =====================================================================
+#
+# Both generated file types previously had their title hardcoded to a
+# small set of keyword matches (falling back to a generic title for
+# anything else, and to a single fixed "safety_requirements.xlsx" for
+# every workbook regardless of what it actually contained). This
+# derives a short, real title from the user's own request instead -
+# strip the "generate me a word doc about..." scaffolding off either
+# end of the sentence and title-case what's left.
+
+_FILE_INTENT_PHRASE_RE = re.compile(
+    r"""
+    (?:please\s+|can\s+you\s+|could\s+you\s+|i\s+need\s+|i\s+want\s+)?
+    (?:generate|create|make|give\s+me|export|produce|prepare|build|put\s+together|download)
+    \s+
+    (?:me\s+)?
+    (?:a\s+|an\s+|the\s+)?
+    (?:downloadable\s+)?
+    (?:word\s+document|word\s+doc|word\s+file|docx\s+file|\.docx|docx|
+       document\s+file|downloadable\s+document|downloadable\s+doc|
+       downloadable\s+word\s+document|
+       excel\s+spreadsheet|excel\s+file|xlsx\s+file|spreadsheet\s+file|
+       downloadable\s+spreadsheet|spreadsheet|workbook|excel|xlsx|
+       document|report)
+    \s*
+    (?:for|of|about|on|covering|listing|summarizing|regarding|that\s+(?:lists|covers|summarizes))?
+    \s*
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_TRAILING_FILETYPE_RE = re.compile(
+    r"""
+    \s*
+    (?:as\s+|in\s+|into\s+|to\s+)
+    (?:a\s+|an\s+|the\s+)?
+    (?:word\s+document|word\s+doc|word\s+file|docx\s+file|\.docx|docx|
+       excel\s+spreadsheet|excel\s+file|xlsx\s+file|spreadsheet\s+file|
+       spreadsheet|workbook|excel|xlsx|document|report)
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_TITLE_SMALL_WORDS = {"a", "an", "the", "of", "for", "and", "or", "in", "on", "to", "with", "at"}
+_MAX_TITLE_WORDS = 7
+
+
+def derive_document_title(user_message: str, fallback: str) -> str:
+    """
+    Turn a request like "generate a word doc about ventilation
+    requirements for confined spaces" into "Ventilation Requirements
+    For Confined Spaces" - i.e. drop the file-request scaffolding,
+    keep the actual subject, title-case it. Falls back to `fallback`
+    if nothing meaningful is left after stripping (e.g. the message
+    was just "make me a word document").
+    """
+    text = user_message.strip()
+    text = _FILE_INTENT_PHRASE_RE.sub("", text, count=1).strip()
+    text = _TRAILING_FILETYPE_RE.sub("", text).strip()
+    text = text.strip(" .,:;-")
+
+    if not text:
+        return fallback
+
+    words = text.split()[:_MAX_TITLE_WORDS]
+    titled = []
+    for i, w in enumerate(words):
+        clean = w.strip(".,:;!?")
+        if not clean:
+            continue
+        if i > 0 and clean.lower() in _TITLE_SMALL_WORDS:
+            titled.append(clean.lower())
+        else:
+            titled.append(clean[:1].upper() + clean[1:])
+
+    title = " ".join(titled).strip()
+    return title if len(title) >= 3 else fallback
+
+
+# =====================================================================
 # DOCUMENT DATA BUILDERS
 # =====================================================================
 
@@ -494,19 +585,7 @@ def build_docx_data(
     results: list,
 ) -> dict:
 
-    message_lower = user_message.lower()
-
-    if "notice of disease" in message_lower:
-        title = "Notice of Disease Requirements"
-
-    elif "ventilation" in message_lower:
-        title = "Ventilation Requirements"
-
-    elif "ppe" in message_lower:
-        title = "Personal Protective Equipment Requirements"
-
-    else:
-        title = "Safety Regulations Summary"
+    title = derive_document_title(user_message, fallback="Safety Regulations Summary")
 
     sources = []
 
@@ -760,6 +839,7 @@ Return only the ROW blocks.
     return unique_rows
 
 def build_xlsx_data(
+        user_message: str,
         rows: list[list[str]],
         results: list,
     ) -> dict:
@@ -768,6 +848,8 @@ def build_xlsx_data(
 
     Python controls the spreadsheet structure completely.
     """
+
+    title = derive_document_title(user_message, fallback="Safety Requirements")
 
     source_names = []
 
@@ -801,7 +883,7 @@ def build_xlsx_data(
         )
 
     return {
-        "filename": "safety_requirements.xlsx",
+        "filename": f"{title}.xlsx",
 
         "sheets": [
             {
@@ -951,7 +1033,7 @@ def handle_file_request_stream(message: str, file_type: str):
             }
             return
 
-        workbook_data = build_xlsx_data(excel_rows, results)
+        workbook_data = build_xlsx_data(message, excel_rows, results)
 
         try:
             filepath = generate_xlsx(workbook_data)

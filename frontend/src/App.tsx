@@ -13,14 +13,32 @@ const nextId = () => `m${++messageIdCounter}`;
 
 // Turns the first user message of a new conversation into a short title,
 // the same way most chat apps do it - no backend/model call needed for
-// something this cheap. Falls back to "New conversation" if the message
-// is empty (e.g. an attachment-only send).
+// something this cheap. Strips common question/request scaffolding
+// ("what is", "can you", "please generate a word doc about", etc.) so the
+// title is just the topic in a few words, not a truncated whole sentence.
+// Falls back to "New conversation" if nothing meaningful is left (e.g. an
+// attachment-only send, or a message that was pure scaffolding).
+const TITLE_LEAD_IN_RE =
+  /^(please\s+|could\s+you\s+|can\s+you\s+|would\s+you\s+)?(what\s+(is|are|was|were)|how\s+(do|does|did|can|to)|why\s+(is|are|was|were|do|does)|when\s+(is|are|was|were|do|does)|where\s+(is|are|was|were|do|does)|tell\s+me\s+(about|more\s+about)?|explain|show\s+me|list|generate|create|make|give\s+me|export|produce|prepare|build|find|search\s+for|look\s+up)\s+/i;
+
+const TITLE_MAX_WORDS = 5;
+
 function titleFromMessage(text: string): string {
-  const trimmed = text.trim().replace(/\s+/g, ' ');
+  let trimmed = text.trim().replace(/\s+/g, ' ');
   if (!trimmed) return 'New conversation';
+
+  // Strip at most one leading scaffolding phrase (repeat once more in case
+  // of stacked lead-ins like "can you tell me about...").
+  trimmed = trimmed.replace(TITLE_LEAD_IN_RE, '').replace(TITLE_LEAD_IN_RE, '').trim();
+  trimmed = trimmed.replace(/^(a|an|the)\s+/i, '').trim();
+  trimmed = trimmed.replace(/[?.!]+$/, '').trim();
+
+  if (!trimmed) return 'New conversation';
+
   const words = trimmed.split(' ');
-  const short = words.slice(0, 8).join(' ');
-  return words.length > 8 ? `${short}…` : short;
+  const short = words.slice(0, TITLE_MAX_WORDS).join(' ');
+  const capitalized = short.charAt(0).toUpperCase() + short.slice(1);
+  return words.length > TITLE_MAX_WORDS ? `${capitalized}…` : capitalized;
 }
 
 export default function App({ onGoHome }: { onGoHome?: () => void }) {

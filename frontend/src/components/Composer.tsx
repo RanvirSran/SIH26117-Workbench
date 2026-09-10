@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { IconSend, IconPlus, IconX, IconPaperclip } from './Icons';
+import { IconSend, IconPlus, IconX } from './Icons';
+import FileTypeBadge from './FileTypeBadge';
 import { uploadFile } from '../api/client';
 import type { Attachment } from '../types';
 
@@ -55,7 +56,7 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
           <div className="composer-attachments">
             {pendingAttachments.map((att) => (
               <div className="attachment-chip attachment-chip--pending" key={att.name}>
-                <IconPaperclip />
+                <FileTypeBadge filename={att.name} />
                 <span>{att.name}</span>
                 <button
                   className="attachment-chip__remove"

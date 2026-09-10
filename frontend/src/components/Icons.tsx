@@ -83,6 +83,16 @@ export function IconPaperclip() {
   );
 }
 
+export function IconDownload() {
+  return (
+    <svg className="ic" viewBox="0 0 24 24">
+      <path d="M12 3v12" />
+      <path d="M7 11l5 5 5-5" />
+      <path d="M5 20h14" />
+    </svg>
+  );
+}
+
 export const toolIconMap = {
   search: IconSearch,
   file: IconFile,
