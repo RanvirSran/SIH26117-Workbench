@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Conversation } from '../types';
-import { IconSearch } from './Icons';
+import { IconSearch, IconX } from './Icons';
 
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 420;
@@ -11,6 +11,7 @@ interface SidebarProps {
   activeConversationId: string;
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
+  onDeleteConversation: (id: string) => void;
   documentCount: number;
   lastIndexed: string;
   width: number;
@@ -25,6 +26,7 @@ export default function Sidebar({
   activeConversationId,
   onSelectConversation,
   onNewConversation,
+  onDeleteConversation,
   documentCount,
   lastIndexed,
   width,
@@ -84,7 +86,17 @@ export default function Sidebar({
             className={`conv-item${c.id === activeConversationId ? ' active' : ''}`}
             onClick={() => onSelectConversation(c.id)}
           >
-            {c.title}
+            <span className="conv-item__title">{c.title}</span>
+            <button
+              className="conv-item__delete"
+              aria-label={`Delete conversation "${c.title}"`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteConversation(c.id);
+              }}
+            >
+              <IconX />
+            </button>
           </div>
         ))}
       </div>

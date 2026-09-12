@@ -34,7 +34,9 @@ The actual file-generation functions live in docgen.py and xlsxgen.py.
 """
 
 import os
+import re
 import sys
+import time
 
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
@@ -52,7 +54,7 @@ _BACKEND_DIR = os.path.dirname(
 sys.path.append(os.path.join(_BACKEND_DIR, "rag"))
 sys.path.append(os.path.join(_BACKEND_DIR, "tools"))
 
-from retrieve import search as rag_search
+from retrieve import search as rag_search, get_document_count
 from docgen import generate_docx
 from xlsxgen import generate_xlsx
 
@@ -83,6 +85,72 @@ llm = ChatOllama(
 # KNOWLEDGE BASE TOOL
 # =====================================================================
 
+def build_evidence(results: list, retrieval_ms: float) -> dict | None:
+    """
+    Turn raw retrieve.py results into the evidence-card shape the
+    frontend renders (source list, excerpt, relevance, etc).
+
+    Returns None when there's nothing to show (no retrieval happened,
+    or it came back empty) so callers can just omit the evidence
+    block instead of rendering an empty one.
+    """
+    if not results:
+        return None
+
+    sources = []
+    seen_titles = set()
+
+    for r in results:
+        title = r.get("source", "Unknown source")
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+
+        distance = r.get("distance", 0) or 0
+        relevance_pct = max(0, min(100, round((1 - distance) * 100)))
+
+        snippet = (r.get("text", "") or "").strip()
+        if len(snippet) > 500:
+            snippet = snippet[:500].rstrip() + "..."
+
+        sources.append({
+            "title": title,
+            "location": f"Relevance {relevance_pct}%",
+            # Frontend resolves this against API_URL and opens it directly -
+            # see GET /kb-docs/{filename} in main.py.
+            "url": f"/kb-docs/{title}",
+            # The actual retrieved chunk text for this specific source, so
+            # the frontend's preview modal can highlight exactly what was
+            # cited instead of just opening the document at the top.
+            "snippet": snippet,
+        })
+
+    excerpt = (results[0].get("text", "") or "").strip()
+    if len(excerpt) > 320:
+        excerpt = excerpt[:320].rstrip() + "..."
+
+    return {
+        "sourceCount": len(sources),
+        "chunkCount": len(results),
+        "retrievalMs": round(retrieval_ms),
+        "documentsInIndex": get_document_count(),
+        "sources": sources,
+        "excerpt": excerpt,
+    }
+
+
+# Set by search_knowledge_base each time it runs, read back by
+# run_agent_stream() right after the agent finishes so the final
+# response can carry a real evidence card (sources, excerpt, timing)
+# instead of just the "steps" trace. This is only safe because this
+# backend serves one request at a time in local dev, per the
+# single-user design called out in README.md - a multi-worker/
+# concurrent deployment would need this threaded through properly
+# (e.g. as agent state) instead of a module global.
+_last_kb_results: list = []
+_last_kb_retrieval_ms: float = 0.0
+
+
 @tool
 def search_knowledge_base(query: str) -> str:
     """
@@ -99,14 +167,20 @@ def search_knowledge_base(query: str) -> str:
     - programming questions
     - unrelated questions
     """
+    global _last_kb_results, _last_kb_retrieval_ms
 
+    start = time.perf_counter()
     try:
         results = rag_search(query, n_results=3)
     except Exception as exc:
         return f"ERROR: knowledge base search failed: {exc}"
+    _last_kb_retrieval_ms = (time.perf_counter() - start) * 1000
 
     if not results:
+        _last_kb_results = []
         return "NO_RELEVANT_KB_RESULTS"
+
+    _last_kb_results = results
 
     formatted = []
 
@@ -420,6 +494,88 @@ a Word document.
     return str(content).strip()
 
 # =====================================================================
+# DOCUMENT TITLE DERIVATION
+# =====================================================================
+#
+# Both generated file types previously had their title hardcoded to a
+# small set of keyword matches (falling back to a generic title for
+# anything else, and to a single fixed "safety_requirements.xlsx" for
+# every workbook regardless of what it actually contained). This
+# derives a short, real title from the user's own request instead -
+# strip the "generate me a word doc about..." scaffolding off either
+# end of the sentence and title-case what's left.
+
+_FILE_INTENT_PHRASE_RE = re.compile(
+    r"""
+    (?:please\s+|can\s+you\s+|could\s+you\s+|i\s+need\s+|i\s+want\s+)?
+    (?:generate|create|make|give\s+me|export|produce|prepare|build|put\s+together|download)
+    \s+
+    (?:me\s+)?
+    (?:a\s+|an\s+|the\s+)?
+    (?:downloadable\s+)?
+    (?:word\s+document|word\s+doc|word\s+file|docx\s+file|\.docx|docx|
+       document\s+file|downloadable\s+document|downloadable\s+doc|
+       downloadable\s+word\s+document|
+       excel\s+spreadsheet|excel\s+file|xlsx\s+file|spreadsheet\s+file|
+       downloadable\s+spreadsheet|spreadsheet|workbook|excel|xlsx|
+       document|report)
+    \s*
+    (?:for|of|about|on|covering|listing|summarizing|regarding|that\s+(?:lists|covers|summarizes))?
+    \s*
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_TRAILING_FILETYPE_RE = re.compile(
+    r"""
+    \s*
+    (?:as\s+|in\s+|into\s+|to\s+)
+    (?:a\s+|an\s+|the\s+)?
+    (?:word\s+document|word\s+doc|word\s+file|docx\s+file|\.docx|docx|
+       excel\s+spreadsheet|excel\s+file|xlsx\s+file|spreadsheet\s+file|
+       spreadsheet|workbook|excel|xlsx|document|report)
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_TITLE_SMALL_WORDS = {"a", "an", "the", "of", "for", "and", "or", "in", "on", "to", "with", "at"}
+_MAX_TITLE_WORDS = 7
+
+
+def derive_document_title(user_message: str, fallback: str) -> str:
+    """
+    Turn a request like "generate a word doc about ventilation
+    requirements for confined spaces" into "Ventilation Requirements
+    For Confined Spaces" - i.e. drop the file-request scaffolding,
+    keep the actual subject, title-case it. Falls back to `fallback`
+    if nothing meaningful is left after stripping (e.g. the message
+    was just "make me a word document").
+    """
+    text = user_message.strip()
+    text = _FILE_INTENT_PHRASE_RE.sub("", text, count=1).strip()
+    text = _TRAILING_FILETYPE_RE.sub("", text).strip()
+    text = text.strip(" .,:;-")
+
+    if not text:
+        return fallback
+
+    words = text.split()[:_MAX_TITLE_WORDS]
+    titled = []
+    for i, w in enumerate(words):
+        clean = w.strip(".,:;!?")
+        if not clean:
+            continue
+        if i > 0 and clean.lower() in _TITLE_SMALL_WORDS:
+            titled.append(clean.lower())
+        else:
+            titled.append(clean[:1].upper() + clean[1:])
+
+    title = " ".join(titled).strip()
+    return title if len(title) >= 3 else fallback
+
+
+# =====================================================================
 # DOCUMENT DATA BUILDERS
 # =====================================================================
 
@@ -429,19 +585,7 @@ def build_docx_data(
     results: list,
 ) -> dict:
 
-    message_lower = user_message.lower()
-
-    if "notice of disease" in message_lower:
-        title = "Notice of Disease Requirements"
-
-    elif "ventilation" in message_lower:
-        title = "Ventilation Requirements"
-
-    elif "ppe" in message_lower:
-        title = "Personal Protective Equipment Requirements"
-
-    else:
-        title = "Safety Regulations Summary"
+    title = derive_document_title(user_message, fallback="Safety Regulations Summary")
 
     sources = []
 
@@ -695,6 +839,7 @@ Return only the ROW blocks.
     return unique_rows
 
 def build_xlsx_data(
+        user_message: str,
         rows: list[list[str]],
         results: list,
     ) -> dict:
@@ -703,6 +848,8 @@ def build_xlsx_data(
 
     Python controls the spreadsheet structure completely.
     """
+
+    title = derive_document_title(user_message, fallback="Safety Requirements")
 
     source_names = []
 
@@ -736,7 +883,7 @@ def build_xlsx_data(
         )
 
     return {
-        "filename": "safety_requirements.xlsx",
+        "filename": f"{title}.xlsx",
 
         "sheets": [
             {
@@ -754,39 +901,40 @@ def build_xlsx_data(
     }
 
 # =====================================================================
-# FILE REQUEST HANDLER
+# FILE REQUEST HANDLER (streaming)
 # =====================================================================
+#
+# This is a generator: it `yield`s a {"type": "step", "text": ...}
+# event the moment each stage of the pipeline actually starts/finishes,
+# instead of only being knowable after the whole request completes.
+# main.py's /chat/stream endpoint forwards each yielded event to the
+# browser as it happens (Server-Sent Events), which is what lets the
+# frontend's loading state show real, current progress instead of a
+# canned "Searching... Generating..." placeholder. It always ends by
+# yielding exactly one {"type": "final", ...} event.
 
-def handle_file_request(
-    message: str,
-    file_type: str,
-) -> dict:
-    """
-    Handle Word/Excel generation without model tool calling.
-    """
+def handle_file_request_stream(message: str, file_type: str):
+    steps: list[str] = []
 
-    steps = []
+    def step(text: str):
+        steps.append(text)
+        return {"type": "step", "text": text}
 
     # ---------------------------------------------------------------
     # RAG
     # ---------------------------------------------------------------
 
-    steps.append(
+    yield step(
         "Searching the knowledge base for information "
         "needed by the requested file."
     )
 
-    context, results = retrieve_for_file(
-        message
-    )
+    context, results = retrieve_for_file(message)
 
     if not results:
-
-        steps.append(
-            "No relevant information found in the knowledge base."
-        )
-
-        return {
+        yield step("No relevant information found in the knowledge base.")
+        yield {
+            "type": "final",
             "reply": (
                 "I couldn't find relevant information in the "
                 "organization's knowledge base, so I didn't generate "
@@ -795,78 +943,61 @@ def handle_file_request(
             ),
             "steps": steps,
             "generated_file": None,
+            "evidence": None,
         }
+        return
 
-    steps.append(
-        f"Retrieved {len(results)} relevant knowledge-base result(s)."
-    )
+    yield step(f"Retrieved {len(results)} relevant knowledge-base result(s).")
+    evidence = build_evidence(results, retrieval_ms=0)
 
     # ---------------------------------------------------------------
     # Grounded summary
     # ---------------------------------------------------------------
 
-    steps.append(
-        "Generating a grounded summary from the retrieved material."
-    )
+    yield step("Generating a grounded summary from the retrieved material.")
 
     try:
-        summary = generate_grounded_summary(
-            message,
-            context,
-        )
-
+        summary = generate_grounded_summary(message, context)
     except Exception as exc:
-
-        steps.append(
-            f"Summary generation failed: {exc}"
-        )
-
-        return {
+        yield step(f"Summary generation failed: {exc}")
+        yield {
+            "type": "final",
             "reply": (
                 "I found relevant information, but the local model "
                 "was unable to prepare the requested file."
             ),
             "steps": steps,
             "generated_file": None,
+            "evidence": evidence,
         }
+        return
 
     # ---------------------------------------------------------------
     # Word
     # ---------------------------------------------------------------
 
     if file_type == "word":
-
-        document_data = build_docx_data(
-            message,
-            summary,
-            results,
-        )
+        document_data = build_docx_data(message, summary, results)
 
         try:
-            filepath = generate_docx(
-                document_data
-            )
-
+            filepath = generate_docx(document_data)
         except Exception as exc:
-
-            steps.append(
-                f"Word generation failed: {exc}"
-            )
-
-            return {
+            yield step(f"Word generation failed: {exc}")
+            yield {
+                "type": "final",
                 "reply": (
                     "I prepared the content but could not create "
                     "the Word document."
                 ),
                 "steps": steps,
                 "generated_file": None,
+                "evidence": evidence,
             }
+            return
 
-        steps.append(
-            f"Generated Word document: {filepath}"
-        )
-
-        return {
+        yield step(f"Generated Word document: {filepath}")
+        yield {
+            "type": "final",
             "reply": (
                 "I've generated the Word document based on the "
                 "information retrieved from the organization's "
@@ -874,32 +1005,23 @@ def handle_file_request(
             ),
             "steps": steps,
             "generated_file": filepath,
+            "evidence": evidence,
         }
+        return
 
     # ---------------------------------------------------------------
     # Excel
     # ---------------------------------------------------------------
 
     if file_type == "excel":
-
-        steps.append(
-            "Extracting structured requirements for the spreadsheet."
-        )
+        yield step("Extracting structured requirements for the spreadsheet.")
 
         try:
-
-            excel_rows = generate_excel_rows(
-                message,
-                context,
-            )
-
+            excel_rows = generate_excel_rows(message, context)
         except Exception as exc:
-
-            steps.append(
-                f"Spreadsheet content extraction failed: {exc}"
-            )
-
-            return {
+            yield step(f"Spreadsheet content extraction failed: {exc}")
+            yield {
+                "type": "final",
                 "reply": (
                     "I found the relevant regulations, but the "
                     "local model was unable to structure them into "
@@ -907,38 +1029,31 @@ def handle_file_request(
                 ),
                 "steps": steps,
                 "generated_file": None,
+                "evidence": evidence,
             }
+            return
 
-        workbook_data = build_xlsx_data(
-            excel_rows,
-            results,
-        )
+        workbook_data = build_xlsx_data(message, excel_rows, results)
 
         try:
-            filepath = generate_xlsx(
-                workbook_data
-            )
-
+            filepath = generate_xlsx(workbook_data)
         except Exception as exc:
-
-            steps.append(
-                f"Excel generation failed: {exc}"
-            )
-
-            return {
+            yield step(f"Excel generation failed: {exc}")
+            yield {
+                "type": "final",
                 "reply": (
                     "I prepared the content but could not create "
                     "the Excel workbook."
                 ),
                 "steps": steps,
                 "generated_file": None,
+                "evidence": evidence,
             }
+            return
 
-        steps.append(
-            f"Generated Excel workbook: {filepath}"
-        )
-
-        return {
+        yield step(f"Generated Excel workbook: {filepath}")
+        yield {
+            "type": "final",
             "reply": (
                 "I've generated the Excel workbook using the "
                 "information retrieved from the organization's "
@@ -946,175 +1061,166 @@ def handle_file_request(
             ),
             "steps": steps,
             "generated_file": filepath,
+            "evidence": evidence,
         }
+        return
 
-    raise ValueError(
-        f"Unsupported file type: {file_type}"
-    )
+    raise ValueError(f"Unsupported file type: {file_type}")
 
 
 # =====================================================================
-# MAIN ENTRY POINT
+# MAIN ENTRY POINT (streaming)
 # =====================================================================
 
-def run_agent(message: str) -> dict:
+def run_agent_stream(message: str):
     """
-    Run the appropriate processing pipeline.
+    Run the appropriate processing pipeline, yielding progress as it
+    actually happens.
 
-    Returns:
-
-    {
-        "reply": str,
-        "steps": list[str],
-        "generated_file": str | None
-    }
+    Yields a sequence of:
+        {"type": "step", "text": str}
+    followed by exactly one:
+        {"type": "final", "reply": str, "steps": list[str],
+         "generated_file": str | None, "evidence": dict | None}
     """
+    global _last_kb_results, _last_kb_retrieval_ms
 
     message = message.strip()
 
     if not message:
-
-        return {
+        yield {
+            "type": "final",
             "reply": "Please provide a question or request.",
             "steps": [],
             "generated_file": None,
+            "evidence": None,
         }
+        return
 
     # ---------------------------------------------------------------
     # Check file intent FIRST.
     # ---------------------------------------------------------------
 
-    file_type = detect_file_intent(
-        message
-    )
+    file_type = detect_file_intent(message)
 
     if file_type:
-
-        return handle_file_request(
-            message,
-            file_type,
-        )
+        yield from handle_file_request_stream(message, file_type)
+        return
 
     # ---------------------------------------------------------------
     # Normal conversational agent
     # ---------------------------------------------------------------
 
-    steps = []
+    steps: list[str] = []
+    _last_kb_results = []
+    _last_kb_retrieval_ms = 0.0
 
     try:
+        seen = 0
+        result_messages: list = []
 
-        result = _normal_agent.invoke(
-            {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": message,
-                    }
-                ]
-            }
-        )
+        # stream_mode="values" yields the full accumulated
+        # {"messages": [...]} state after every graph step, so we only
+        # need to look at whatever is new since the last chunk to know
+        # what just happened - that's what makes this genuinely live
+        # rather than replayed after the fact.
+        for chunk in _normal_agent.stream(
+            {"messages": [{"role": "user", "content": message}]},
+            stream_mode="values",
+        ):
+            result_messages = chunk.get("messages", [])
+
+            for msg in result_messages[seen:]:
+                msg_type = type(msg).__name__
+
+                if msg_type == "AIMessage":
+                    tool_calls = getattr(msg, "tool_calls", None)
+                    if tool_calls:
+                        for call in tool_calls:
+                            yield {
+                                "type": "step",
+                                "text": (
+                                    f"Deciding to use tool: "
+                                    f"{call.get('name', 'unknown')} "
+                                    f"(args: {call.get('args', {})})"
+                                ),
+                            }
+                            steps.append(
+                                f"Deciding to use tool: "
+                                f"{call.get('name', 'unknown')} "
+                                f"(args: {call.get('args', {})})"
+                            )
+
+                elif msg_type == "ToolMessage":
+                    tool_name = getattr(msg, "name", "")
+                    content = str(getattr(msg, "content", ""))
+
+                    if tool_name == "search_knowledge_base":
+                        if "NO_RELEVANT_KB_RESULTS" in content:
+                            text = "No relevant information found in the knowledge base."
+                        elif content.startswith("ERROR:"):
+                            text = f"Knowledge base error: {content}"
+                        else:
+                            text = "Knowledge base returned relevant information."
+                        yield {"type": "step", "text": text}
+                        steps.append(text)
+
+            seen = len(result_messages)
 
     except Exception as exc:
-
-        steps.append(
-            f"Agent execution failed: {exc}"
-        )
-
-        return {
+        text = f"Agent execution failed: {exc}"
+        yield {"type": "step", "text": text}
+        steps.append(text)
+        yield {
+            "type": "final",
             "reply": (
                 "I wasn't able to complete that request because "
                 "the local AI model failed to produce a response."
             ),
             "steps": steps,
             "generated_file": None,
+            "evidence": None,
         }
-
-    messages = result.get(
-        "messages",
-        []
-    )
+        return
 
     final_reply = ""
-
-    for msg in messages:
-
-        msg_type = type(msg).__name__
-
-        if msg_type == "AIMessage":
-
-            tool_calls = getattr(
-                msg,
-                "tool_calls",
-                None
-            )
-
-            if tool_calls:
-
-                for call in tool_calls:
-
-                    steps.append(
-                        f"Deciding to use tool: "
-                        f"{call.get('name', 'unknown')} "
-                        f"(args: {call.get('args', {})})"
-                    )
-
-            content = getattr(
-                msg,
-                "content",
-                ""
-            )
-
+    for msg in result_messages:
+        if type(msg).__name__ == "AIMessage":
+            content = getattr(msg, "content", "")
             if isinstance(content, str) and content.strip():
                 final_reply = content.strip()
 
-        elif msg_type == "ToolMessage":
-
-            tool_name = getattr(
-                msg,
-                "name",
-                ""
-            )
-
-            content = str(
-                getattr(
-                    msg,
-                    "content",
-                    ""
-                )
-            )
-
-            if tool_name == "search_knowledge_base":
-
-                if "NO_RELEVANT_KB_RESULTS" in content:
-
-                    steps.append(
-                        "No relevant information found "
-                        "in the knowledge base."
-                    )
-
-                elif content.startswith("ERROR:"):
-
-                    steps.append(
-                        f"Knowledge base error: {content}"
-                    )
-
-                else:
-
-                    steps.append(
-                        "Knowledge base returned relevant information."
-                    )
-
     if not final_reply:
+        final_reply = "I wasn't able to produce a final answer."
 
-        final_reply = (
-            "I wasn't able to produce a final answer."
-        )
+    evidence = build_evidence(_last_kb_results, _last_kb_retrieval_ms)
 
-    return {
+    yield {
+        "type": "final",
         "reply": final_reply,
         "steps": steps,
         "generated_file": None,
+        "evidence": evidence,
     }
+
+
+def run_agent(message: str) -> dict:
+    """
+    Non-streaming convenience wrapper around run_agent_stream(), kept
+    for callers that just want the end result (the __main__ test
+    block below, and any script that doesn't need live progress).
+    Drains the generator and returns only its final event.
+    """
+    final: dict = {
+        "reply": "I wasn't able to produce a final answer.",
+        "steps": [],
+        "generated_file": None,
+        "evidence": None,
+    }
+    for event in run_agent_stream(message):
+        if event["type"] == "final":
+            final = {k: v for k, v in event.items() if k != "type"}
+    return final
 
 
 # =====================================================================

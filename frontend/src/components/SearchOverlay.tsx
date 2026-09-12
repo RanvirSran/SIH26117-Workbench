@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { IconSearch, IconFile } from './Icons';
+import DocumentPreviewModal from './DocumentPreviewModal';
 import { searchDocuments } from '../api/client';
 import type { SearchResult } from '../types';
 
@@ -12,6 +13,7 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [previewResult, setPreviewResult] = useState<SearchResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -20,11 +22,17 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (previewResult) {
+          setPreviewResult(null);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, previewResult]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -69,18 +77,42 @@ export default function SearchOverlay({ onClose }: SearchOverlayProps) {
           {!isSearching && hasSearched && results.length === 0 && (
             <div className="search-overlay__empty">No matches found.</div>
           )}
-          {!isSearching && results.map((r) => (
-            <div className="search-result" key={r.id}>
-              <div className="search-result__snippet">{r.snippet}</div>
-              <div className="search-result__source">
-                <IconFile />
-                <span>{r.documentTitle}</span>
-                <span className="search-result__loc">{r.location}</span>
+          {!isSearching && results.map((r) => {
+            const content = (
+              <>
+                <div className="search-result__snippet">{r.snippet}</div>
+                <div className="search-result__source">
+                  <IconFile />
+                  <span>{r.documentTitle}</span>
+                  <span className="search-result__loc">{r.location}</span>
+                </div>
+              </>
+            );
+            return r.url ? (
+              <button
+                className="search-result"
+                key={r.id}
+                onClick={() => setPreviewResult(r)}
+                type="button"
+              >
+                {content}
+              </button>
+            ) : (
+              <div className="search-result" key={r.id}>
+                {content}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+
+      {previewResult && previewResult.url && (
+        <DocumentPreviewModal
+          filename={previewResult.documentTitle}
+          highlight={previewResult.snippet}
+          onClose={() => setPreviewResult(null)}
+        />
+      )}
     </div>
   );
 }

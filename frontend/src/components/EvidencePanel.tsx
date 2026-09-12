@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import DocumentPreviewModal from './DocumentPreviewModal';
 import type { Source } from '../types';
 
 interface EvidencePanelProps {
@@ -17,6 +19,7 @@ export default function EvidencePanel({
   documentsInIndex,
   excerpt,
 }: EvidencePanelProps) {
+  const [previewSource, setPreviewSource] = useState<Source | null>(null);
   const sectionsUsed = sources.map((s) => `${s.title} ${s.location}`).join(' · ');
 
   return (
@@ -34,11 +37,17 @@ export default function EvidencePanel({
       <div className="evidence-body">
         <div className="source-grid">
           {sources.map((s) => (
-            <div className="source-card" key={s.title}>
+            <button
+              className="source-card"
+              key={s.title}
+              onClick={() => s.url && setPreviewSource(s)}
+              disabled={!s.url}
+              type="button"
+            >
               <div className="src-title">{s.title}</div>
               <div className="src-loc">{s.location}</div>
-              <div className="src-link">View source →</div>
-            </div>
+              {s.url && <div className="src-link">Preview source →</div>}
+            </button>
           ))}
         </div>
 
@@ -63,6 +72,14 @@ export default function EvidencePanel({
           </div>
         </details>
       </div>
+
+      {previewSource && (
+        <DocumentPreviewModal
+          filename={previewSource.title}
+          highlight={previewSource.snippet}
+          onClose={() => setPreviewSource(null)}
+        />
+      )}
     </div>
   );
 }

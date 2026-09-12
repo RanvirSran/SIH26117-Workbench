@@ -13,7 +13,12 @@ export const mockKnowledgeBaseStatus: KnowledgeBaseStatus = {
 };
 
 const mockChatReplyText =
-  'Based on the retrieved refinery documents, the shutdown procedure requires isolating the upstream and downstream block valves, confirming zero pressure, verifying the vent line condition, and applying LOTO before maintenance begins.';
+  '## Shutdown requirements\n\n' +
+  'Based on the retrieved refinery documents, the shutdown procedure for Pump P-102 requires:\n\n' +
+  '1. Isolating the **upstream and downstream block valves**\n' +
+  '2. Confirming **zero pressure** at the local gauge\n' +
+  '3. Verifying the **vent line condition** is clear of obstruction\n' +
+  '4. Applying **LOTO** before maintenance begins\n';
 
 // Seeded history so the default conversation isn't empty on first load.
 export const mockMessageHistory: Record<string, ChatMessage[]> = {
@@ -61,7 +66,14 @@ export const mockMessageHistory: Record<string, ChatMessage[]> = {
 // the frontend is fully demoable without a backend running.
 export function mockChatReply(_message: string): ChatResponse {
   return {
+    reply: mockChatReplyText,
     answer: mockChatReplyText,
+    steps: [
+      'Searching knowledge base...',
+      'Found 3 relevant results...',
+      'Cross-checking against source documents...',
+      'Generating answer...',
+    ],
     evidence: {
       sourceCount: 3,
       chunkCount: 3,
@@ -138,9 +150,10 @@ export function mockSearch(query: string): SearchResult[] {
   return matches.length > 0 ? matches : mockSearchCorpus.slice(0, 3);
 }
 
-// Placeholder step sequence for the reasoning panel. A real agent loop will
-// emit these as discrete events; for now they're just timed to appear one
-// at a time so the demo reads as "working", not just a spinner.
+// Placeholder step sequence for the reasoning panel, used only as a last
+// resort (mock mode, or if a stream ends with zero step events). The real
+// live steps now come from the backend's /chat/stream events as they
+// actually happen — see ReasoningPanel's `liveStep` prop.
 export const mockReasoningSteps: ReasoningStep[] = [
   { id: 'r1', label: 'Searching knowledge base...' },
   { id: 'r2', label: 'Found 3 relevant results...' },
